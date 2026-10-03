@@ -1,0 +1,7 @@
+{
+  "name": "StudyTrack - Academic Performance & Progress Dashboard",
+  "description": "An academic study tracker dashboard with dynamic mathematical progress calculations, real-time subject backlog charts, and time-based task locking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access control metadata",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 256 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "lastLoginAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Master syllabus subject containing hierarchical chapters and topics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "maxLength": 32 },
+        "color": { "type": "string", "maxLength": 16 },
+        "order": { "type": "number" },
+        "chapters": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "name", "code", "chapters"]
+    },
+    "Challenge": {
+      "title": "Challenge",
+      "description": "Study sprint challenge with participant progress tracking",
+      "type": "object",
+      "properties": {
+        "challenge_id": { "type": "string", "maxLength": 64 },
+        "code": { "type": "string", "maxLength": 16 },
+        "created_by": { "type": "string", "maxLength": 128 },
+        "duration": { "type": "number" },
+        "start_date": { "type": "string", "maxLength": 64 },
+        "selected_syllabus": { "type": "array" },
+        "day_wise_allocation": { "type": "object" },
+        "participants": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["challenge_id", "created_by", "duration", "selected_syllabus", "start_date", "participants"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Authenticated user profiles, roles, and account preferences"
+    },
+    "/master_syllabus/{subjectId}": {
+      "schema": "Subject",
+      "description": "Master syllabus subjects, chapters, and topics managed exclusively by admins"
+    },
+    "/challenges/{challengeId}": {
+      "schema": "Challenge",
+      "description": "Real-time cohort study challenges with participant progress synchronization"
+    }
+  }
+}

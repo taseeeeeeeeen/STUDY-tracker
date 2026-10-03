@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny Catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'ahmedtaseen008@gmail.com' && request.auth.token.email_verified == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'role']) &&
+        data.keys().hasOnly(['uid', 'name', 'email', 'role', 'photoURL', 'createdAt', 'lastLoginAt']) &&
+        data.uid is string && data.uid.size() <= 128 &&
+        data.name is string && data.name.size() <= 128 &&
+        data.email is string && data.email.size() <= 256 &&
+        (data.role == 'user' || data.role == 'admin') &&
+        (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('lastLoginAt' in data) || (data.lastLoginAt is string && data.lastLoginAt.size() <= 64));
+    }
+
+    function isValidSubject(data) {
+      return data.keys().hasAll(['id', 'name', 'code', 'chapters']) &&
+        data.id is string && data.id.size() <= 64 &&
+        data.name is string && data.name.size() <= 128 &&
+        data.code is string && data.code.size() <= 32 &&
+        data.chapters is list && data.chapters.size() <= 100;
+    }
+
+    // User profiles & RBAC collection
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && incoming().uid == request.auth.uid && (
+        incoming().role == 'user' ||
+        (incoming().role == 'admin' && request.auth.token.email == 'ahmedtaseen008@gmail.com' && request.auth.token.email_verified == true)
+      );
+      allow update: if isValidId(userId) && isValidUser(incoming()) && incoming().uid == existing().uid && (
+        isAdmin() ||
+        (isOwner(userId) && incoming().role == existing().role)
+      );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // Master syllabus collection (Curriculum maintained by admins only)
+    match /master_syllabus/{subjectId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isValidId(subjectId) && isAdmin() && isValidSubject(incoming());
+      allow delete: if isValidId(subjectId) && isAdmin();
+    }
+
+    // Challenges collection (Real-time cohort sprint coordination)
+    match /challenges/{challengeId} {
+      allow get, list: if isSignedIn();
+      allow create: if isValidId(challengeId) && isSignedIn() && incoming().created_by == request.auth.uid;
+      allow update: if isValidId(challengeId) && isSignedIn();
+      allow delete: if isValidId(challengeId) && (isAdmin() || (isSignedIn() && existing().created_by == request.auth.uid));
+    }
+
+    // Health check endpoint for connection verification
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

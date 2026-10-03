@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function () {
+        try {
+          var _rawFetch = typeof window !== 'undefined' && window.fetch ? window.fetch : undefined;
+          var _boundFetch = _rawFetch
+            ? function () {
+                return _rawFetch.apply(window, arguments);
+              }
+            : undefined;
+
+          var _currentFetch = _boundFetch;
+          var descriptor = {
+            get: function () {
+              return _currentFetch;
+            },
+            set: function (fn) {
+              if (typeof fn === 'function') {
+                _currentFetch = function () {
+                  try {
+                    return fn.apply(this || window, arguments);
+                  } catch (e) {
+                    if (_rawFetch) {
+                      return _rawFetch.apply(window, arguments);
+                    }
+                    throw e;
+                  }
+                };
+              } else {
+                _currentFetch = _boundFetch;
+              }
+            },
+            configurable: true,
+            enumerable: true,
+          };
+
+          if (typeof window !== 'undefined') {
+            try {
+              Object.defineProperty(window, 'fetch', descriptor);
+            } catch (e1) {
+              if (typeof Window !== 'undefined' && Window.prototype) {
+                try {
+                  Object.defineProperty(Window.prototype, 'fetch', descriptor);
+                } catch (e2) {}
+              }
+            }
+          }
+
+          if (typeof globalThis !== 'undefined' && globalThis !== window) {
+            try {
+              Object.defineProperty(globalThis, 'fetch', descriptor);
+            } catch (e3) {}
+          }
+        } catch (err) {
+          // ignore
+        }
+      })();
+    </script>
+    <title>StudyTrack - Academic Performance & Progress Dashboard</title>
+    <meta name="description" content="An academic study tracker dashboard with dynamic mathematical progress calculations, real-time subject backlog charts, and time-based task locking." />
+    <meta property="og:title" content="StudyTrack - Academic Performance & Progress Dashboard" />
+    <meta property="og:description" content="An academic study tracker dashboard with dynamic mathematical progress calculations, real-time subject backlog charts, and time-based task locking." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+  </head>
+  <body class="bg-[#f8f9ff] text-[#0b1c30] antialiased selection:bg-[#95d4ac] selection:text-[#002111]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
