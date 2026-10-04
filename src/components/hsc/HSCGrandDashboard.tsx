@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStudyTrack } from '../../context/StudyTrackContext';
 import { HSCHeroDonuts } from './HSCHeroDonuts';
 import { HSCSubjectAccordion } from './HSCSubjectAccordion';
 import { Link } from 'react-router-dom';
+import { buildProgressReportData, renderProgressReportImage } from '../../utils/progressReport';
 
 export const HSCGrandDashboard: React.FC = () => {
   // Global State Synchronization through Context API
@@ -11,7 +12,64 @@ export const HSCGrandDashboard: React.FC = () => {
     hscSummary,
     toggleHSCTheory,
     toggleHSCPractice,
+    triggerToast,
   } = useStudyTrack();
+
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleShareProgress = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    try {
+      const data = buildProgressReportData(hscSummary, hscMasterSyllabus);
+      const blob = await renderProgressReportImage(data);
+      const file = new File([blob], 'hsc-study-progress.png', { type: 'image/png' });
+
+      // Check if browser has native social file sharing API capabilities
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'HSC Study Progress Report',
+          text: `My overall HSC syllabus completion is at ${Math.round(data.grandProgressPercent)}%! I've completed ${data.topicsCompleted} of ${data.totalTopics} topics. Keep tracking with StudyTrack Academic!`,
+        });
+        triggerToast('Progress report shared successfully!');
+      } else {
+        // Desktop / unsupportive fallback: Direct download + text summary copy
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'hsc-study-progress.png';
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
+
+        // Generate matching formatted text summary
+        let txt = `📚 *HSC BOARD PREP REPORT* 📚\n`;
+        txt += `==============================\n`;
+        txt += `Overall Completion: ${Math.round(data.grandProgressPercent)}%\n`;
+        txt += `Theory Read: ${Math.round(data.overallTheoryPercent)}%\n`;
+        txt += `Practice Done: ${Math.round(data.overallPracticePercent)}%\n`;
+        txt += `Topics Mastered: ${data.topicsCompleted} / ${data.totalTopics}\n`;
+        txt += `Chapters Mastered: ${data.chaptersCompleted} / ${data.totalChapters}\n\n`;
+        txt += `*Subject Breakdown:*\n`;
+        data.subjectRows.forEach((row) => {
+          txt += `• ${row.subject}: ${Math.round(row.percent)}% (${row.done}/${row.total} topics fully done)\n`;
+        });
+        txt += `\nGenerated via StudyTrack Academic.`;
+
+        await navigator.clipboard.writeText(txt);
+        triggerToast('Progress report downloaded & text summary copied to clipboard!');
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error('Failed to generate/share progress report:', err);
+        triggerToast('Failed to share progress report. Please try again.');
+      }
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   // Milestone 1: Live countdown to HSC 2027 Final Exam (June 6, 2027, Bangladesh Time)
   const hscTargetTime = new Date('2027-06-06T00:00:00+06:00').getTime();
@@ -83,6 +141,18 @@ export const HSCGrandDashboard: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-3 self-start md:self-auto">
+              <button
+                type="button"
+                onClick={handleShareProgress}
+                disabled={isGenerating}
+                className="bg-[#003820] hover:bg-[#002111] active:scale-95 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-[15px] leading-none">
+                  {isGenerating ? 'sync' : 'share'}
+                </span>
+                <span>{isGenerating ? 'Generating...' : 'Share Progress'}</span>
+              </button>
+
               <div className="bg-[#eff4ff] px-3.5 py-1.5 rounded-xl flex items-center gap-2 border border-[#c0c9c0]/30 text-xs">
                 <span className="w-2 h-2 rounded-full bg-[#006c49]" />
                 <span className="text-[#0b1c30] font-medium font-mono">

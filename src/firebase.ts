@@ -12,8 +12,9 @@ export const db = initializeFirestore(
   app,
   {
     experimentalForceLongPolling: true,
+    useFetchStreams: false,
     ignoreUndefinedProperties: true,
-  },
+  } as any,
   firebaseConfig.firestoreDatabaseId
 );
 

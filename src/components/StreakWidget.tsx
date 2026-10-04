@@ -3,9 +3,14 @@ import React from 'react';
 interface StreakWidgetProps {
   streakDays: number;
   userCreatedAt?: string;
+  activeDates?: Set<string>;
 }
 
-export const StreakWidget: React.FC<StreakWidgetProps> = ({ streakDays, userCreatedAt }) => {
+export const StreakWidget: React.FC<StreakWidgetProps> = ({
+  streakDays,
+  userCreatedAt,
+  activeDates,
+}) => {
   const today = new Date();
   const createdDate = userCreatedAt ? new Date(userCreatedAt) : new Date();
   const createdDateMidnight = new Date(
@@ -22,7 +27,15 @@ export const StreakWidget: React.FC<StreakWidgetProps> = ({ streakDays, userCrea
     const isToday = idx === 6;
     const dayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
     const dayLetter = dayLetters[d.getDay()];
-    const completed = dayMidnight >= createdDateMidnight;
+
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const localDateKeyOfThatDay = `${yyyy}-${mm}-${dd}`;
+
+    const completed = activeDates !== undefined
+      ? activeDates.has(localDateKeyOfThatDay)
+      : dayMidnight >= createdDateMidnight;
 
     return {
       day: dayLetter,

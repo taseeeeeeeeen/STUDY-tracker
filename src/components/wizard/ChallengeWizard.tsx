@@ -171,18 +171,25 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 durationMinutes: top.durationMinutes || 45,
                 tag: top.tag || 'Core Concept',
                 checked: false, // Default to unselected (Task 3.1)
+                chapterId: ch.id,
+                chapterName: ch.name,
               });
             });
           });
         });
 
         // Apply dedupeSyllabusTopics so Theory/Practice rows collapse into one selectable topic
-        const dedupedItems = dedupeSyllabusTopics(flattenedItems).map((item) => ({
-          ...item,
-          subconcept: item.subconcept || 'Concept synthesis',
-          tag: item.tag || 'Core Concept',
-          checked: false,
-        })) as SyllabusItem[];
+        const dedupedItems = dedupeSyllabusTopics(flattenedItems).map((item) => {
+          const orig = flattenedItems.find(o => o.id === item.id);
+          return {
+            ...item,
+            subconcept: item.subconcept || 'Concept synthesis',
+            tag: item.tag || 'Core Concept',
+            checked: false,
+            chapterId: orig?.chapterId || '',
+            chapterName: orig?.chapterName || '',
+          };
+        }) as SyllabusItem[];
 
         setSyllabus((prev) => {
           if (prev.length === 0) return dedupedItems;
@@ -491,6 +498,18 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   const handleToggleSyllabus = (id: string) => {
     setSyllabus((prev) =>
       prev.map((s) => (s.id === id ? { ...s, checked: !s.checked } : s))
+    );
+  };
+
+  const handleToggleChapterSyllabus = (chapterId: string, chapterTopics: { id: string }[], allChecked: boolean) => {
+    const topicIds = chapterTopics.map((t) => t.id);
+    setSyllabus((prev) =>
+      prev.map((s) => {
+        if (topicIds.includes(s.id)) {
+          return { ...s, checked: !allChecked };
+        }
+        return s;
+      })
     );
   };
 
@@ -902,6 +921,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                             return item?.checked;
                           }).length;
 
+                          const isChapterAllChecked = ch.topics.length > 0 && ch.topics.every((t) => {
+                            const item = syllabusMap.get(t.id);
+                            return item?.checked;
+                          });
+
                           return (
                             <div
                               key={ch.id}
@@ -924,6 +948,22 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                                       {isChapterOpen ? 'expand_less' : 'expand_more'}
                                     </span>
                                   </button>
+                                  <input
+                                    type="checkbox"
+                                    checked={isChapterAllChecked}
+                                    ref={(el) => {
+                                      if (el) {
+                                        const someChecked = ch.topics.some((t) => syllabusMap.get(t.id)?.checked);
+                                        el.indeterminate = someChecked && !isChapterAllChecked;
+                                      }
+                                    }}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleChapterSyllabus(ch.id, ch.topics, isChapterAllChecked);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-4 h-4 accent-[#003820] rounded cursor-pointer shrink-0"
+                                  />
                                   <span className="text-xs font-bold text-[#0b1c30]">{ch.name}</span>
                                 </div>
                                 <span className="text-[11px] font-mono text-[#707971]">

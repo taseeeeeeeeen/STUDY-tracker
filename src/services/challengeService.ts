@@ -258,6 +258,21 @@ export async function updateChallengeDayAllocation(
   }
 }
 
+export async function restartChallengeClock(
+  challengeId: string,
+  isoStartDate: string
+): Promise<void> {
+  const challengeRef = doc(db, COLLECTION_NAME, challengeId);
+  try {
+    await updateDoc(challengeRef, {
+      start_date: isoStartDate,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
+  }
+}
+
 export function getChallengeEndDate(challenge: { start_date: string; duration: number }): Date {
   if (!challenge || !challenge.start_date) return new Date(NaN);
   const parts = challenge.start_date.split('T')[0].split('-');

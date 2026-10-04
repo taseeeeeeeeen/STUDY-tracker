@@ -81,10 +81,11 @@ service cloud.firestore {
       allow delete: if isValidId(subjectId) && isAdmin();
     }
 
-    // User progress persistence
+    // User progress persistence (personal progress = source of truth for rooms)
+    // The doc holds only uid, progress flags, a completion log, a peer code and challenge ids,
+    // so read can be open to signed-in users; writes stay owner-only so nobody can forge another member's progress.
     match /user_progress/{userId} {
-      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin() || isLinkedPeer(userId));
-      allow list: if isSignedIn();
+      allow get, list: if isValidId(userId) && isSignedIn();
       allow create, update: if isValidId(userId) && isOwner(userId);
       allow delete: if isValidId(userId) && isAdmin();
     }

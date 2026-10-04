@@ -22,6 +22,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
     activeChallenge,
     peers,
     sortedPeers,
+    memberProgressMap,
     joinChallengeCode,
     triggerToast,
   } = useStudyTrack();
@@ -839,6 +840,11 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
         onClose={() => setSelectedPeerForModal(null)}
         peer={selectedPeerForModal}
         challenge={activeChallenge}
+        memberProgress={
+          selectedPeerForModal
+            ? memberProgressMap[selectedPeerForModal.uid || selectedPeerForModal.id]
+            : null
+        }
       />
     </div>
   );

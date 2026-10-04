@@ -3,17 +3,21 @@ import { FirestoreChallenge, ChallengeParticipant } from '../../types/challenge'
 import { PeerContender } from '../../types/peerArena';
 import { PeerSyllabusModal } from './PeerSyllabusModal';
 import { useAuth } from '../../context/AuthContext';
+import { dedupeSyllabusTopics } from '../../utils/challengeLogic';
+import { UserProgressDoc } from '../../services/userProgressService';
 
 interface ChallengeLeaderboardProps {
   challenge: FirestoreChallenge | null;
   isOpen: boolean;
   onClose: () => void;
+  memberProgress?: Record<string, UserProgressDoc | null>;
 }
 
 export const ChallengeLeaderboard: React.FC<ChallengeLeaderboardProps> = ({
   challenge,
   isOpen,
   onClose,
+  memberProgress,
 }) => {
   const { user } = useAuth();
   const [selectedPeerForModal, setSelectedPeerForModal] = useState<PeerContender | null>(null);
@@ -23,12 +27,49 @@ export const ChallengeLeaderboard: React.FC<ChallengeLeaderboardProps> = ({
   // Compute sorted peers and rankings for this specific challenge using StudyTrackContext scoring logic
   const sortedPeers: PeerContender[] = useMemo(() => {
     const participants: ChallengeParticipant[] = challenge.participants || [];
+    const rawSyllabus = challenge.selected_syllabus || [];
+    const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
+    const totalSyllabusTopics = dedupedSyllabus.length || 1;
+    const startDate = new Date(challenge.start_date).getTime();
+    const elapsedDays = Math.max(1, (Date.now() - startDate) / (1000 * 60 * 60 * 24));
 
     const mapped: PeerContender[] = participants.map((p, index) => {
-      const total = p.total_challenge_topics || challenge.selected_syllabus?.length || 1;
-      const completed = p.completed_topics || 0;
-      const scorePercent = Math.min(100, Math.round((completed / total) * 100));
+      const liveDoc = memberProgress ? memberProgress[p.uid] : null;
+
+      let completed: number;
+      let total: number = totalSyllabusTopics;
+      let progressMap: Record<string, { theory: boolean; practice: boolean }>;
+
+      if (liveDoc && liveDoc.topicProgress) {
+        progressMap = {};
+        for (const top of dedupedSyllabus) {
+          if (liveDoc.topicProgress[top.id]) {
+            progressMap[top.id] = liveDoc.topicProgress[top.id];
+          }
+        }
+        completed = dedupedSyllabus.filter((top) => {
+          const tp = liveDoc.topicProgress[top.id];
+          return tp && tp.theory && tp.practice;
+        }).length;
+      } else {
+        completed = p.completed_topics || 0;
+        total = p.total_challenge_topics || totalSyllabusTopics;
+        progressMap = p.topic_progress || {};
+      }
+
+      const scorePercent = total > 0 ? (completed / total) * 100 : 0;
       const isCurrentUser = user ? p.uid === user.uid : index === 0;
+
+      const firstIncomplete = dedupedSyllabus.find((top) => {
+        const prog = progressMap[top.id];
+        return !prog || !prog.theory || !prog.practice;
+      });
+
+      const activeFocus = firstIncomplete
+        ? `${firstIncomplete.subject}: ${firstIncomplete.title}`
+        : 'Sprint Completed';
+
+      const velocity = Number((completed / elapsedDays).toFixed(1));
 
       return {
         id: p.uid,
@@ -36,21 +77,21 @@ export const ChallengeLeaderboard: React.FC<ChallengeLeaderboardProps> = ({
         name: p.name,
         photoURL: p.photoURL || '',
         avatarUrl: p.photoURL || '',
-        cohort: 'HSC Science',
+        cohort: challenge.code ? `Room ${challenge.code}` : 'HSC Sprint',
         completed_topics: completed,
         total_challenge_topics: total,
         completedTopics: completed,
         totalTopics: total,
-        scorePercent,
-        streakDays: 5,
-        velocityPerDay: 1.5,
+        scorePercent: Math.min(100, Math.round(scorePercent)),
+        streakDays: Math.min(Math.ceil(elapsedDays), Math.max(0, Math.ceil(completed))),
+        velocityPerDay: Math.max(0, velocity),
         rankTrend: 0,
-        activeFocus: 'Revision & Drills',
+        activeFocus,
         rank: 0, // Assigned after sort
         isCurrentUser,
         isSquad: isCurrentUser || index < 3,
         last_completion_timestamp: p.last_completion_timestamp || Date.now(),
-        topic_progress: p.topic_progress,
+        topic_progress: progressMap,
       };
     });
 
@@ -64,7 +105,7 @@ export const ChallengeLeaderboard: React.FC<ChallengeLeaderboardProps> = ({
     });
 
     return mapped.map((p, idx) => ({ ...p, rank: idx + 1 }));
-  }, [challenge, user]);
+  }, [challenge, user, memberProgress]);
 
   const rank1 = sortedPeers[0];
   const rank2 = sortedPeers[1];
@@ -317,6 +358,11 @@ export const ChallengeLeaderboard: React.FC<ChallengeLeaderboardProps> = ({
           challenge={challenge}
           peer={selectedPeerForModal}
           onClose={() => setSelectedPeerForModal(null)}
+          memberProgress={
+            selectedPeerForModal && memberProgress
+              ? memberProgress[selectedPeerForModal.uid || selectedPeerForModal.id]
+              : null
+          }
         />
       )}
     </div>

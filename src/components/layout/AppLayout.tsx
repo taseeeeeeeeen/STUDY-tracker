@@ -15,6 +15,7 @@ import { useStudyTrack } from '../../context/StudyTrackContext';
 import { useAuth } from '../../context/AuthContext';
 import { QuickLogModal } from '../QuickLogModal';
 import { StudyModeModal } from '../StudyModeModal';
+import { ScrollToTopButton } from '../ScrollToTopButton';
 
 export const AppLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -227,6 +228,8 @@ export const AppLayout: React.FC = () => {
         <div className="flex-1">
           <Outlet />
         </div>
+
+        <ScrollToTopButton />
 
         {/* Global Footer */}
         <footer className="w-full bg-white border-t border-[#c0c9c0]/30 py-6 mt-12">

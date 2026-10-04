@@ -18,14 +18,17 @@ import { subscribeMasterSyllabus } from '../services/syllabusService';
 import {
   joinFirestoreChallenge,
   findChallengeByCode,
-  toggleTopicProgressInChallenge,
   subscribeChallenge,
   isChallengeActive,
+  restartChallengeClock,
 } from '../services/challengeService';
 import { dedupeSyllabusTopics } from '../utils/challengeLogic';
 import {
   subscribeUserProgress,
+  subscribeMemberProgress,
   toggleUserTopicProgress,
+  setUserTopicProgressBatch,
+  resetTopicsProgress,
   UserTopicProgress,
   UserProgressDoc,
   updateActiveChallengeId,
@@ -41,6 +44,8 @@ import {
   computeBacklog,
   computeSprint,
   computeOverallPercent,
+  computeStreakDays,
+  getDailyActiveDateKeys,
 } from '../lib/progressMath';
 
 interface StudyTrackContextType {
@@ -50,6 +55,7 @@ interface StudyTrackContextType {
   backlog: WeeklyBacklog;
   sprint: ActiveSprint;
   streakDays: number;
+  dailyActiveDateKeys: Set<string>;
   currentTime: number;
   todayCompletionPercentage: number;
   completedUnits: number;
@@ -69,6 +75,7 @@ interface StudyTrackContextType {
     scorePercent: number;
     rank: number;
   })[];
+  memberProgressMap: Record<string, UserProgressDoc | null>;
   weeklySnapshots: WeeklySnapshot[];
 
   // Action Dispatchers
@@ -76,9 +83,16 @@ interface StudyTrackContextType {
   toggleDashboardPractice: (taskId: string) => Promise<void>;
   toggleHSCTheory: (subjectId: string, chapterId: string, topicId: string) => void;
   toggleHSCPractice: (subjectId: string, chapterId: string, topicId: string) => void;
+  setChapterProgress: (
+    subjectId: string,
+    chapterId: string,
+    type: 'theory' | 'practice',
+    done: boolean
+  ) => Promise<void>;
   addDashboardTopic: (newTask: Omit<Task, 'id' | 'isLocked'>) => void;
   joinChallengeCode: (code: string) => Promise<boolean>;
   setActiveChallenge: (challenge: FirestoreChallenge) => void;
+  resetActiveChallenge: () => Promise<void>;
   triggerToast: (msg: string) => void;
   toastMessage: string | null;
   clearToast: () => void;
@@ -135,7 +149,20 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [user]);
 
   // Per-user global HSC progress from Firestore
+  const [userProgressDoc, setUserProgressDoc] = useState<UserProgressDoc | null>(null);
   const [userProgress, setUserProgress] = useState<Record<string, UserTopicProgress>>({});
+  const userProgressRef = useRef<Record<string, UserTopicProgress>>({});
+  const completionLogRef = useRef<Record<string, { theory: number | null; practice: number | null }> | undefined>(undefined);
+  const [memberProgressMap, setMemberProgressMap] = useState<Record<string, UserProgressDoc | null>>({});
+
+  useEffect(() => {
+    userProgressRef.current = userProgress;
+  }, [userProgress]);
+
+  useEffect(() => {
+    completionLogRef.current = userProgressDoc?.completionLog;
+  }, [userProgressDoc]);
+
   const [globalMasterSyllabus, setGlobalMasterSyllabus] = useState<MasterSubject[]>([]);
 
   // Real tasks from active challenge (empty by default if no active challenge)
@@ -176,6 +203,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   // Real-Time Firestore onSnapshot Listener for User Progress
   useEffect(() => {
     if (!user) {
+      setUserProgressDoc(null);
       setUserProgress({});
       setActiveChallengeId(null);
       localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
@@ -185,6 +213,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     const unsubscribe = subscribeUserProgress(
       user.uid,
       (progressDoc: UserProgressDoc | null) => {
+        setUserProgressDoc(progressDoc);
         if (progressDoc) {
           setUserProgress(progressDoc.topicProgress || {});
           
@@ -261,19 +290,15 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
 
         setActiveChallengeState(challengeDoc);
 
-        // Map challenge topics & current user's progress into Main Dashboard tasks
-        // REQUIREMENT 5: Use ONLY current user's participant record, no fallback
-        const currentUserParticipant = challengeDoc.participants.find((p) => p.uid === user.uid);
-        const userTopicProgress = currentUserParticipant?.topic_progress || {};
-        
+        // Map challenge topics & current user's personal progress into Main Dashboard tasks
         const challengeCreatedAt = new Date(challengeDoc.start_date).getTime() || Date.now();
 
-        // STEP 2 - Apply dedupeSyllabusTopics before mapping
+        // Apply dedupeSyllabusTopics before mapping
         const rawSyllabus = challengeDoc.selected_syllabus || [];
         const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
 
         const mappedTasks: Task[] = dedupedSyllabus.map((top, idx) => {
-          const prog = userTopicProgress[top.id] || { theory: false, practice: false };
+          const prog = userProgressRef.current[top.id] || { theory: false, practice: false };
 
           // Replace hardcoded substring guessing with exact/prefix matching
           const subjectStr = top.subject || 'Physics';
@@ -322,6 +347,58 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     return () => unsubscribe();
   }, [activeChallengeId, user]);
 
+  // Real-Time onSnapshot Listener for all Active Challenge Members' personal progress
+  useEffect(() => {
+    if (!activeChallenge || !activeChallenge.participants || activeChallenge.participants.length === 0) {
+      setMemberProgressMap({});
+      return;
+    }
+
+    const unsubs: (() => void)[] = [];
+    const participants = activeChallenge.participants;
+
+    for (const p of participants) {
+      if (!p.uid) continue;
+      const unsub = subscribeMemberProgress(
+        p.uid,
+        (doc) => {
+          setMemberProgressMap((prev) => ({
+            ...prev,
+            [p.uid]: doc,
+          }));
+        },
+        (err) => {
+          console.warn(`Failed to subscribe to member progress for ${p.uid}:`, err);
+        }
+      );
+      unsubs.push(unsub);
+    }
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [activeChallenge]);
+
+  // Sync tasks completion flags when userProgress updates
+  useEffect(() => {
+    setTasks((prevTasks) =>
+      prevTasks.map((t) => {
+        const prog = userProgress[t.id] || { theory: false, practice: false };
+        if (
+          t.theoryCompleted === Boolean(prog.theory) &&
+          t.practiceCompleted === Boolean(prog.practice)
+        ) {
+          return t;
+        }
+        return {
+          ...t,
+          theoryCompleted: Boolean(prog.theory),
+          practiceCompleted: Boolean(prog.practice),
+        };
+      })
+    );
+  }, [userProgress]);
+
   // Time-based task locking logic (24h expiration from createdAt)
   useEffect(() => {
     const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
@@ -362,14 +439,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       };
     });
 
-    const promises = [];
-    if (activeChallengeId) {
-      promises.push(toggleTopicProgressInChallenge(activeChallengeId, user.uid, taskId, 'theory'));
-    }
-    promises.push(toggleUserTopicProgress(user.uid, taskId, 'theory'));
-
     try {
-      await Promise.all(promises);
+      await toggleUserTopicProgress(user.uid, taskId, 'theory');
     } catch (err) {
       console.error('Failed to sync theory toggle to Firestore:', err);
       // Rollback
@@ -399,14 +470,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       };
     });
 
-    const promises = [];
-    if (activeChallengeId) {
-      promises.push(toggleTopicProgressInChallenge(activeChallengeId, user.uid, taskId, 'practice'));
-    }
-    promises.push(toggleUserTopicProgress(user.uid, taskId, 'practice'));
-
     try {
-      await Promise.all(promises);
+      await toggleUserTopicProgress(user.uid, taskId, 'practice');
     } catch (err) {
       console.error('Failed to sync practice toggle to Firestore:', err);
       // Rollback
@@ -437,16 +502,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       prev.map((t) => (t.id === topicId ? { ...t, theoryCompleted: !t.theoryCompleted } : t))
     );
 
-    const promises = [];
-    promises.push(toggleUserTopicProgress(user.uid, topicId, 'theory'));
-    
-    // Sync with challenge if applicable
-    if (activeChallengeId && tasks.some(t => t.id === topicId)) {
-      promises.push(toggleTopicProgressInChallenge(activeChallengeId, user.uid, topicId, 'theory'));
-    }
-
     try {
-      await Promise.all(promises);
+      await toggleUserTopicProgress(user.uid, topicId, 'theory');
     } catch (err) {
       console.error('Failed to toggle HSC theory:', err);
       setUserProgress(prevUserProgress);
@@ -475,21 +532,74 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       prev.map((t) => (t.id === topicId ? { ...t, practiceCompleted: !t.practiceCompleted } : t))
     );
 
-    const promises = [];
-    promises.push(toggleUserTopicProgress(user.uid, topicId, 'practice'));
-
-    // Sync with challenge if applicable
-    if (activeChallengeId && tasks.some(t => t.id === topicId)) {
-      promises.push(toggleTopicProgressInChallenge(activeChallengeId, user.uid, topicId, 'practice'));
-    }
-
     try {
-      await Promise.all(promises);
+      await toggleUserTopicProgress(user.uid, topicId, 'practice');
     } catch (err) {
       console.error('Failed to toggle HSC practice:', err);
       setUserProgress(prevUserProgress);
       setTasks(prevTasks);
       triggerToast('Failed to save progress.');
+    }
+  };
+
+  const setChapterProgress = async (
+    subjectId: string,
+    chapterId: string,
+    type: 'theory' | 'practice',
+    done: boolean
+  ) => {
+    if (!user) return;
+
+    const subject = hscMasterSyllabus.find((s) => s.id === subjectId);
+    const chapter = subject?.chapters.find((c) => c.id === chapterId);
+    if (!chapter) return;
+
+    const topicIds = chapter.topics.map((t) => t.id);
+    if (topicIds.length === 0) return;
+
+    // Build the updates object
+    const batchUpdates: Record<string, { theory: boolean; practice: boolean }> = {};
+    topicIds.forEach((topicId) => {
+      const current = userProgress[topicId] || { theory: false, practice: false };
+      batchUpdates[topicId] = {
+        ...current,
+        [type]: done,
+      };
+    });
+
+    // Optimistic local state update
+    const prevUserProgress = { ...userProgress };
+    const prevTasks = [...tasks];
+
+    // Update userProgress state
+    setUserProgress((prev) => {
+      const next = { ...prev };
+      topicIds.forEach((topicId) => {
+        next[topicId] = batchUpdates[topicId];
+      });
+      return next;
+    });
+
+    // Update tasks state
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (topicIds.includes(t.id)) {
+          return {
+            ...t,
+            [type === 'theory' ? 'theoryCompleted' : 'practiceCompleted']: done,
+          };
+        }
+        return t;
+      })
+    );
+
+    try {
+      await setUserTopicProgressBatch(user.uid, batchUpdates);
+    } catch (err) {
+      console.error('Failed to set chapter progress batch:', err);
+      setUserProgress(prevUserProgress);
+      setTasks(prevTasks);
+      triggerToast('Failed to sync chapter progress. Please try again.');
     }
   };
 
@@ -563,15 +673,15 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     return computeSubjectWeeklyStats(tasks);
   }, [tasks]);
 
-  // Real Streak calculated from user's first login date (createdAt in users/{uid})
+  // Real Streak calculated from real completion events
   const streakDays = useMemo(() => {
-    if (!user?.createdAt) return 1;
-    const createdTime = new Date(user.createdAt).getTime();
-    if (isNaN(createdTime)) return 1;
-    const now = Date.now();
-    const diffMs = Math.max(0, now - createdTime);
-    return Math.max(1, Math.floor(diffMs / 86400000) + 1);
-  }, [user?.createdAt]);
+    return computeStreakDays(userProgressDoc?.completionLog, Date.now());
+  }, [userProgressDoc]);
+
+  // Set of daily active date keys (local YYYY-MM-DD keys)
+  const dailyActiveDateKeys = useMemo(() => {
+    return getDailyActiveDateKeys(userProgressDoc?.completionLog);
+  }, [userProgressDoc]);
 
   // Real Active Sprint state computed from active challenge
   const sprint: ActiveSprint = useMemo(() => {
@@ -623,17 +733,41 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   const peers: PeerContender[] = useMemo(() => {
     if (!activeChallenge || !activeChallenge.participants) return [];
 
-    const totalSyllabusTopics = activeChallenge.selected_syllabus?.length || 1;
+    const rawSyllabus = activeChallenge.selected_syllabus || [];
+    const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
+    const totalSyllabusTopics = dedupedSyllabus.length || 1;
     const startDate = new Date(activeChallenge.start_date).getTime();
     const elapsedDays = Math.max(1, (Date.now() - startDate) / (1000 * 60 * 60 * 24));
 
     return activeChallenge.participants.map((p) => {
       const isCurrentUser = p.uid === user?.uid;
-      const completedTopics = p.completed_topics || 0;
-      const progressMap = p.topic_progress || {};
+      const liveDoc = memberProgressMap[p.uid];
+
+      let completedTopics: number;
+      let progressMap: Record<string, UserTopicProgress>;
+      let totalChallengeTopics: number = totalSyllabusTopics;
+
+      if (liveDoc && liveDoc.topicProgress) {
+        // Overlay live doc
+        progressMap = {};
+        for (const top of dedupedSyllabus) {
+          if (liveDoc.topicProgress[top.id]) {
+            progressMap[top.id] = liveDoc.topicProgress[top.id];
+          }
+        }
+        completedTopics = dedupedSyllabus.filter((top) => {
+          const tp = liveDoc.topicProgress[top.id];
+          return tp && tp.theory && tp.practice;
+        }).length;
+      } else {
+        // Fall back to stored participant fields
+        completedTopics = p.completed_topics || 0;
+        progressMap = p.topic_progress || {};
+        totalChallengeTopics = p.total_challenge_topics || totalSyllabusTopics;
+      }
 
       // Determine active focus from first unfinished topic
-      const firstIncomplete = activeChallenge.selected_syllabus.find((top) => {
+      const firstIncomplete = dedupedSyllabus.find((top) => {
         const prog = progressMap[top.id];
         return !prog || !prog.theory || !prog.practice;
       });
@@ -654,7 +788,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         avatarUrl: p.photoURL || '',
         activeFocus,
         completed_topics: completedTopics,
-        total_challenge_topics: totalSyllabusTopics,
+        total_challenge_topics: totalChallengeTopics,
         last_completion_timestamp: p.last_completion_timestamp || 0,
         topic_progress: progressMap,
         velocityPerDay: Math.max(0, velocity),
@@ -664,7 +798,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         isSquad: true,
       };
     });
-  }, [activeChallenge, user]);
+  }, [activeChallenge, user, memberProgressMap]);
 
   // Peer Arena Sorting Algorithm & Tie-Breaker Math
   const sortedPeers = useMemo(() => {
@@ -777,6 +911,29 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     streakDays
   ]);
 
+  // Reset active challenge (wipe personal DB progress for sprint scope + restart clock)
+  const resettingRef = useRef(false);
+  const resetActiveChallenge = async () => {
+    if (resettingRef.current) return;
+    if (!user || !activeChallenge) return;
+
+    resettingRef.current = true;
+    try {
+      const deduped = dedupeSyllabusTopics(activeChallenge.selected_syllabus || []);
+      const topicIds = deduped.map((t) => t.id);
+
+      await resetTopicsProgress(user.uid, topicIds);
+      await restartChallengeClock(activeChallenge.challenge_id, new Date().toISOString());
+
+      triggerToast('Challenge reset. Day 1 starts now.');
+    } catch (err) {
+      console.error('Failed to reset active challenge:', err);
+      triggerToast('Failed to reset challenge. Please try again.');
+    } finally {
+      resettingRef.current = false;
+    }
+  };
+
   return (
     <StudyTrackContext.Provider
       value={{
@@ -785,6 +942,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         backlog,
         sprint,
         streakDays,
+        dailyActiveDateKeys,
         currentTime,
         todayCompletionPercentage,
         completedUnits,
@@ -797,14 +955,17 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         challenge,
         peers,
         sortedPeers,
+        memberProgressMap,
         weeklySnapshots,
         toggleDashboardTheory,
         toggleDashboardPractice,
         toggleHSCTheory,
         toggleHSCPractice,
+        setChapterProgress,
         addDashboardTopic,
         joinChallengeCode,
         setActiveChallenge,
+        resetActiveChallenge,
         triggerToast,
         toastMessage,
         clearToast,

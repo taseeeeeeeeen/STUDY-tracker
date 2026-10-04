@@ -1,11 +1,14 @@
 import React from 'react';
 import { ChallengeParticipant, FirestoreChallenge } from '../../types/challenge';
+import { UserProgressDoc } from '../../services/userProgressService';
+import { dedupeSyllabusTopics } from '../../utils/challengeLogic';
 
 interface PeerSyllabusModalProps {
   isOpen: boolean;
   onClose: () => void;
   peer: (ChallengeParticipant & { rank?: number; scorePercent?: number; id?: string }) | null;
   challenge: FirestoreChallenge | null;
+  memberProgress?: UserProgressDoc | null;
 }
 
 export const PeerSyllabusModal: React.FC<PeerSyllabusModalProps> = ({
@@ -13,20 +16,52 @@ export const PeerSyllabusModal: React.FC<PeerSyllabusModalProps> = ({
   onClose,
   peer,
   challenge,
+  memberProgress,
 }) => {
   if (!isOpen || !peer || !challenge) return null;
 
-  // Resolve the live participant record directly from the active Firestore challenge snapshot
+  // Resolve the participant record from challenge snapshot
   const peerIdentifier = peer.uid || peer.id;
   const participant =
     challenge.participants.find((p) => p.uid === peerIdentifier) || peer;
 
-  const totalTopics = challenge.selected_syllabus.length;
-  const completedTopics = participant.completed_topics || 0;
-  const scorePercent =
-    totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
+  const rawSyllabus = challenge.selected_syllabus || [];
+  const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
+  const totalTopics = dedupedSyllabus.length || rawSyllabus.length || 1;
 
-  const topicProgressMap = participant.topic_progress || {};
+  let completedTopics = 0;
+  let scorePercent = 0;
+  let topicProgressMap: Record<string, { theory: boolean; practice: boolean }> = {};
+  let lastActiveTimestamp: number | null = null;
+
+  if (memberProgress) {
+    topicProgressMap = memberProgress.topicProgress || {};
+    completedTopics = dedupedSyllabus.filter((top) => {
+      const prog = topicProgressMap[top.id];
+      return prog && prog.theory && prog.practice;
+    }).length;
+    scorePercent = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
+
+    // Resolve max completion timestamp from completionLog
+    let maxTimestamp: number | null = null;
+    if (memberProgress.completionLog) {
+      for (const log of Object.values(memberProgress.completionLog)) {
+        if (log?.theory && (maxTimestamp === null || log.theory > maxTimestamp)) {
+          maxTimestamp = log.theory;
+        }
+        if (log?.practice && (maxTimestamp === null || log.practice > maxTimestamp)) {
+          maxTimestamp = log.practice;
+        }
+      }
+    }
+    lastActiveTimestamp = maxTimestamp ?? participant.last_completion_timestamp ?? null;
+  } else {
+    completedTopics = participant.completed_topics || 0;
+    scorePercent = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
+    topicProgressMap = participant.topic_progress || {};
+    lastActiveTimestamp = participant.last_completion_timestamp ?? null;
+  }
+
   const avatarImage =
     participant.photoURL || ('avatarUrl' in peer ? (peer as { avatarUrl?: string }).avatarUrl : undefined);
 
@@ -96,8 +131,8 @@ export const PeerSyllabusModal: React.FC<PeerSyllabusModalProps> = ({
               Last Active
             </span>
             <span className="text-xs font-mono font-semibold text-[#006c49] block mt-1.5">
-              {participant.last_completion_timestamp
-                ? new Date(participant.last_completion_timestamp).toLocaleTimeString([], {
+              {lastActiveTimestamp
+                ? new Date(lastActiveTimestamp).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
                   })

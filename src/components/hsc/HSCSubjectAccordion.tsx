@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { HSCSubject } from '../../types/hsc';
+import { useStudyTrack } from '../../context/StudyTrackContext';
 
 interface HSCSubjectAccordionProps {
   syllabus: HSCSubject[];
@@ -12,6 +13,7 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
   onToggleTheory,
   onTogglePractice,
 }) => {
+  const { setChapterProgress } = useStudyTrack();
   // Paper filter: 'all' | '1st' | '2nd'
   const [paperFilter, setPaperFilter] = useState<'all' | '1st' | '2nd'>('all');
   // Sort by: 'completion' | 'weightage' | 'pending'
@@ -306,6 +308,12 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
                       const isChapterFullyDone =
                         totalTopicsInChapter > 0 &&
                         chapter.topics.every((t) => t.is_theory_done && t.is_practice_done);
+                      const isTheoryAll =
+                        totalTopicsInChapter > 0 &&
+                        theoryDoneCount === totalTopicsInChapter;
+                      const isPracticeAll =
+                        totalTopicsInChapter > 0 &&
+                        practiceDoneCount === totalTopicsInChapter;
 
                       return (
                         <div
@@ -336,7 +344,7 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
                                 </span>
                               </button>
                               <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <h5 className="text-xs sm:text-sm font-bold text-[#0b1c30]">
                                     {chapter.title}
                                   </h5>
@@ -345,6 +353,41 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
                                       Mastered
                                     </span>
                                   )}
+                                  <div className="flex items-center gap-1.5 ml-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setChapterProgress(subject.id, chapter.id, 'theory', !isTheoryAll);
+                                      }}
+                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer shadow-xs ${
+                                        isTheoryAll
+                                          ? 'bg-[#003820] text-white hover:bg-[#0f5132]'
+                                          : 'bg-[#e5eeff] text-[#404942] hover:bg-[#dce9ff]'
+                                      }`}
+                                      title="Toggle Theory for all topics in chapter"
+                                    >
+                                      <span className="material-symbols-outlined text-xs leading-none">auto_stories</span>
+                                      <span>Theory</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setChapterProgress(subject.id, chapter.id, 'practice', !isPracticeAll);
+                                      }}
+                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer shadow-xs ${
+                                        isPracticeAll
+                                          ? 'bg-[#003820] text-white hover:bg-[#0f5132]'
+                                          : 'bg-[#e5eeff] text-[#404942] hover:bg-[#dce9ff]'
+                                      }`}
+                                      title="Toggle Practice for all topics in chapter"
+                                    >
+                                      <span className="material-symbols-outlined text-xs leading-none">edit_note</span>
+                                      <span>Practice</span>
+                                    </button>
+                                  </div>
                                 </div>
                                 <div className="text-[11px] text-[#404942] mt-0.5">
                                   {completedTopicsInChapter} of {totalTopicsInChapter} topics mastered • {theoryDoneCount} theory, {practiceDoneCount} practice

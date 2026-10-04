@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { SubjectWeeklyStat, ActiveSprint, WeeklyBacklog } from '../types/dashboard';
 
 interface TopOverviewCardsProps {
@@ -10,6 +10,7 @@ interface TopOverviewCardsProps {
   weeklyStats: SubjectWeeklyStat[];
   backlog: WeeklyBacklog;
   sprint: ActiveSprint;
+  onReset?: () => void;
 }
 
 export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
@@ -21,7 +22,33 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
   weeklyStats,
   backlog,
   sprint,
+  onReset,
 }) => {
+  const [confirmReset, setConfirmReset] = useState(false);
+  const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    };
+  }, []);
+
+  const handleResetClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onReset) return;
+
+    if (!confirmReset) {
+      setConfirmReset(true);
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = setTimeout(() => {
+        setConfirmReset(false);
+      }, 4000);
+    } else {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      setConfirmReset(false);
+      onReset();
+    }
+  };
   // Total remaining topics across all subjects
   const totalRemainingWeekly = weeklyStats.reduce((acc, s) => acc + s.remaining, 0);
 
@@ -164,9 +191,22 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
               style={{ width: `${(sprint.daysCompleted / sprint.totalDays) * 100}%` }}
             />
           </div>
-          <div className="flex items-center gap-1.5 text-[#006c49] text-xs pt-1">
-            <span className="material-symbols-outlined text-sm">workspace_premium</span>
-            <span>{sprint.rewardBadge}</span>
+          <div className="flex items-center justify-between text-[#006c49] text-xs pt-1">
+            <div className="flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-sm">workspace_premium</span>
+              <span>{sprint.rewardBadge}</span>
+            </div>
+            {onReset && (
+              <button
+                type="button"
+                onClick={handleResetClick}
+                className={`text-xs font-semibold cursor-pointer transition-colors ${
+                  confirmReset ? 'text-amber-700 font-bold' : 'text-[#707971] hover:text-[#0b1c30]'
+                }`}
+              >
+                {confirmReset ? 'Confirm reset?' : 'Reset'}
+              </button>
+            )}
           </div>
         </div>
       </div>

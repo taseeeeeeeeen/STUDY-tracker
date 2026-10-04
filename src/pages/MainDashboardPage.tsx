@@ -19,6 +19,7 @@ export const MainDashboardPage: React.FC = () => {
     backlog,
     sprint,
     streakDays,
+    dailyActiveDateKeys,
     currentTime,
     todayCompletionPercentage,
     completedUnits,
@@ -27,6 +28,7 @@ export const MainDashboardPage: React.FC = () => {
     toggleDashboardTheory,
     toggleDashboardPractice,
     addDashboardTopic,
+    resetActiveChallenge,
   } = useStudyTrack();
 
   const [isAddTopicOpen, setIsAddTopicOpen] = useState(false);
@@ -122,6 +124,7 @@ export const MainDashboardPage: React.FC = () => {
           weeklyStats={weeklyStats}
           backlog={backlog}
           sprint={sprint}
+          onReset={resetActiveChallenge}
         />
 
         {/* Main Grid: 7 Cols (Today's Action Zone) + 5 Cols (Analytics & Widgets) */}
@@ -176,7 +179,11 @@ export const MainDashboardPage: React.FC = () => {
             />
 
             {/* Bento 3: Study Streak & Badges */}
-            <StreakWidget streakDays={streakDays} userCreatedAt={user?.createdAt} />
+            <StreakWidget
+              streakDays={streakDays}
+              userCreatedAt={user?.createdAt}
+              activeDates={dailyActiveDateKeys}
+            />
           </div>
         </div>
       </div>

@@ -8,6 +8,8 @@ export interface SyllabusItem {
   durationMinutes: number;
   tag: string;
   checked: boolean;
+  chapterId: string;
+  chapterName: string;
 }
 
 export interface BoardCard {

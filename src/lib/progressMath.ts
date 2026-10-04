@@ -169,3 +169,78 @@ export function computeOverallPercent(
   const completedPracticeCount = topics.filter((t) => t.is_practice_done).length;
   return ((completedTheoryCount + completedPracticeCount) / (totalTopics * 2)) * 100;
 }
+
+export function getDailyActiveDateKeys(
+  completionLog: Record<string, { theory: number | null; practice: number | null }> | undefined
+): Set<string> {
+  const activeKeys = new Set<string>();
+  if (!completionLog) return activeKeys;
+
+  for (const log of Object.values(completionLog)) {
+    if (log) {
+      if (typeof log.theory === 'number' && log.theory > 0) {
+        const d = new Date(log.theory);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        activeKeys.add(`${yyyy}-${mm}-${dd}`);
+      }
+      if (typeof log.practice === 'number' && log.practice > 0) {
+        const d = new Date(log.practice);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        activeKeys.add(`${yyyy}-${mm}-${dd}`);
+      }
+    }
+  }
+  return activeKeys;
+}
+
+export function computeStreakDays(
+  completionLog: Record<string, { theory: number | null; practice: number | null }> | undefined,
+  nowMs: number
+): number {
+  if (!completionLog) return 0;
+  const activeKeys = getDailyActiveDateKeys(completionLog);
+  if (activeKeys.size === 0) return 0;
+
+  const d = new Date(nowMs);
+  d.setHours(12, 0, 0, 0); // avoid DST issues by setting to noon
+
+  const formatDate = (date: Date) => {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const todayKey = formatDate(d);
+
+  // Yesterday
+  const yesterday = new Date(d);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = formatDate(yesterday);
+
+  // If neither today nor yesterday has activity, streak is 0
+  if (!activeKeys.has(todayKey) && !activeKeys.has(yesterdayKey)) {
+    return 0;
+  }
+
+  // If today has no activity but yesterday does, start counting from yesterday
+  const startDay = activeKeys.has(todayKey) ? d : yesterday;
+  let streak = 0;
+  const currentCheck = new Date(startDay);
+
+  while (true) {
+    const key = formatDate(currentCheck);
+    if (activeKeys.has(key)) {
+      streak++;
+      currentCheck.setDate(currentCheck.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  return streak;
+}
