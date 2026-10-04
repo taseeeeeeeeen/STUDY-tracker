@@ -68,7 +68,14 @@ export function renderProgressReportImage(data: ReportData): Promise<Blob> {
     try {
       const canvas = document.createElement('canvas');
       canvas.width = 1080;
-      canvas.height = 1350;
+      
+      const rowHeight = 58;
+      const listStartY = 805;
+      const footerSpace = 80;
+      const subjectCount = data.subjectRows?.length || 0;
+      const neededHeight = listStartY + subjectCount * rowHeight + footerSpace;
+      canvas.height = Math.max(1350, neededHeight);
+
       const ctx = canvas.getContext('2d');
       if (!ctx) {
         throw new Error('Canvas 2D context not supported');
@@ -80,7 +87,7 @@ export function renderProgressReportImage(data: ReportData): Promise<Blob> {
 
       // 1. Off-white Elegant Background
       ctx.fillStyle = '#fafbfb';
-      ctx.fillRect(0, 0, 1080, 1350);
+      ctx.fillRect(0, 0, 1080, canvas.height);
 
       // 2. Header Band (App primary dark green #003820)
       ctx.fillStyle = '#003820';
@@ -246,9 +253,9 @@ export function renderProgressReportImage(data: ReportData): Promise<Blob> {
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // 8. Render Subject List (max 8 rows)
+      // 8. Render Subject List
       let startY = 805;
-      data.subjectRows.slice(0, 8).forEach((row, index) => {
+      (data.subjectRows || []).forEach((row, index) => {
         const rowY = startY + index * 58;
 
         // Subject Title
@@ -319,7 +326,7 @@ export function renderProgressReportImage(data: ReportData): Promise<Blob> {
       ctx.fillStyle = '#94a3b8';
       ctx.font = '500 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Generated natively via StudyTrack Board Prep Portal. No student left behind.', 540, 1315);
+      ctx.fillText('Generated natively via StudyTrack Board Prep Portal. No student left behind.', 540, canvas.height - 35);
 
       // Return Blob
       canvas.toBlob((blob) => {
