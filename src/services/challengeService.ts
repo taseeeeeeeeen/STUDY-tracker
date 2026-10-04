@@ -138,21 +138,14 @@ export async function joinFirestoreChallenge(
       return currentChallenge;
     }
 
-    // Initialize progress for all topics in the challenge
-    const initialProgress: Record<string, ParticipantTopicProgress> = {};
-    currentChallenge.selected_syllabus.forEach((top) => {
-      initialProgress[top.id] = { theory: false, practice: false };
-    });
-
     const newParticipant: ChallengeParticipant = {
       uid: user.uid,
       name: user.name,
       email: user.email,
       photoURL: user.photoURL,
       completed_topics: 0,
-      total_challenge_topics: currentChallenge.selected_syllabus.length,
+      total_challenge_topics: currentChallenge.selected_syllabus?.length || 0,
       last_completion_timestamp: Date.now(),
-      topic_progress: initialProgress,
       joined_at: new Date().toISOString(),
     };
 
@@ -190,18 +183,12 @@ export async function toggleTopicProgressInChallenge(
 
       if (participantIndex === -1) {
         // If user wasn't registered in participants array yet, create initial entry
-        const initialProgress: Record<string, ParticipantTopicProgress> = {};
-        challengeData.selected_syllabus.forEach((top) => {
-          initialProgress[top.id] = { theory: false, practice: false };
-        });
-
         const newPart: ChallengeParticipant = {
           uid,
           name: 'Student',
           completed_topics: 0,
-          total_challenge_topics: challengeData.selected_syllabus.length,
+          total_challenge_topics: challengeData.selected_syllabus?.length || 0,
           last_completion_timestamp: Date.now(),
-          topic_progress: initialProgress,
           joined_at: new Date().toISOString(),
         };
         participants.push(newPart);

@@ -29,22 +29,17 @@ const COLLECTION_NAME = 'user_progress';
 export async function updateActiveChallengeId(uid: string, challengeId: string | null): Promise<void> {
   const docRef = doc(db, COLLECTION_NAME, uid);
   try {
-    await updateDoc(docRef, {
-      activeChallengeId: challengeId,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (err) {
-    // If doc doesn't exist, create it
-    try {
-      await setDoc(docRef, {
+    await setDoc(
+      docRef,
+      {
         uid,
-        topicProgress: {},
         activeChallengeId: challengeId,
         updatedAt: new Date().toISOString(),
-      });
-    } catch (innerErr) {
-      handleFirestoreError(innerErr, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
-    }
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
   }
 }
 
@@ -53,7 +48,14 @@ export async function addJoinedChallengeId(uid: string, challengeId: string): Pr
   try {
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(userDocRef);
-      if (!snap.exists()) return;
+      if (!snap.exists()) {
+        transaction.set(userDocRef, {
+          uid,
+          joinedChallengeIds: [challengeId],
+          lastLoginAt: new Date().toISOString(),
+        });
+        return;
+      }
       const data = snap.data();
       const currentIds: string[] = Array.isArray(data.joinedChallengeIds) ? data.joinedChallengeIds : [];
       if (!currentIds.includes(challengeId)) {

@@ -143,6 +143,11 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   const activeChallengeIdRef = useRef<string | null>(null);
   const [activeChallenge, setActiveChallengeState] = useState<FirestoreChallenge | null>(null);
   const isExpiringRef = useRef<string | null>(null);
+
+  // Attached Room (Peer Arena membership only)
+  const [attachedRoomId, setAttachedRoomId] = useState<string | null>(null);
+  const [attachedRoomChallenge, setAttachedRoomChallenge] = useState<FirestoreChallenge | null>(null);
+
   const [weeklySnapshots, setWeeklySnapshots] = useState<WeeklySnapshot[]>([]);
   const lastSnapshotPayloadRef = useRef<string>('');
 
@@ -379,15 +384,49 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     return () => unsubscribe();
   }, [activeChallengeId, user]);
 
-  // Real-Time onSnapshot Listener for all Active Challenge Members' personal progress
+  // Real-Time Firestore onSnapshot Listener for Attached Room (Peer Arena membership)
   useEffect(() => {
-    if (!activeChallenge || !activeChallenge.participants || activeChallenge.participants.length === 0) {
+    if (!user || !attachedRoomId) {
+      setAttachedRoomChallenge(null);
+      return;
+    }
+
+    if (attachedRoomId === activeChallengeId) {
+      setAttachedRoomChallenge(activeChallenge);
+      return;
+    }
+
+    const unsubscribe = subscribeChallenge(
+      attachedRoomId,
+      (roomDoc) => {
+        if (!roomDoc) {
+          setAttachedRoomChallenge(null);
+          setAttachedRoomId(null);
+          return;
+        }
+        setAttachedRoomChallenge(roomDoc);
+      },
+      (err) => {
+        console.warn('Real-time attached room onSnapshot error:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [attachedRoomId, activeChallengeId, activeChallenge, user]);
+
+  // The active room for Peer Arena is the joined room, or the user's personal active challenge
+  const roomChallenge = attachedRoomChallenge || activeChallenge;
+
+  // Real-Time onSnapshot Listener for all Room Challenge Members' personal progress
+  useEffect(() => {
+    const targetChallenge = roomChallenge;
+    if (!targetChallenge || !targetChallenge.participants || targetChallenge.participants.length === 0) {
       setMemberProgressMap({});
       return;
     }
 
     const unsubs: (() => void)[] = [];
-    const participants = activeChallenge.participants;
+    const participants = targetChallenge.participants;
 
     for (const p of participants) {
       if (!p.uid) continue;
@@ -409,7 +448,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [activeChallenge]);
+  }, [roomChallenge]);
 
   // Sync tasks completion flags when userProgress updates
   useEffect(() => {
@@ -692,7 +731,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     triggerToast(`Added topic: "${task.title}"`);
   };
 
-  // Join Challenge by Code
+  // Join Challenge by Code (Room membership only - does NOT rewrite personal dashboard display source)
   const joinChallengeCode = async (code: string): Promise<boolean> => {
     if (!user) return false;
     const cleanCode = code.toUpperCase().trim();
@@ -710,10 +749,11 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         photoURL: user.photoURL,
       });
 
-      setActiveChallengeId(challengeDoc.challenge_id);
-      localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, challengeDoc.challenge_id);
-      await updateActiveChallengeId(user.uid, challengeDoc.challenge_id);
-      
+      await addJoinedChallengeId(user.uid, challengeDoc.challenge_id);
+
+      setAttachedRoomId(challengeDoc.challenge_id);
+      setAttachedRoomChallenge(challengeDoc);
+
       triggerToast(`Successfully joined Challenge: ${cleanCode}!`);
       return true;
     } catch {
@@ -725,6 +765,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   const setActiveChallenge = async (newChallenge: FirestoreChallenge) => {
     setActiveChallengeId(newChallenge.challenge_id);
     setActiveChallengeState(newChallenge);
+    setAttachedRoomId(null);
+    setAttachedRoomChallenge(null);
     localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, newChallenge.challenge_id);
     
     if (user) {
@@ -840,15 +882,16 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
 
   // Real-Time Peer Arena Leaderboard from ONLY real Firestore Participants
   const peers: PeerContender[] = useMemo(() => {
-    if (!activeChallenge || !activeChallenge.participants) return [];
+    const targetChallenge = roomChallenge;
+    if (!targetChallenge || !targetChallenge.participants) return [];
 
-    const rawSyllabus = activeChallenge.selected_syllabus || [];
+    const rawSyllabus = targetChallenge.selected_syllabus || [];
     const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
     const totalSyllabusTopics = dedupedSyllabus.length || 1;
-    const startDate = new Date(activeChallenge.start_date).getTime();
+    const startDate = new Date(targetChallenge.start_date).getTime();
     const elapsedDays = Math.max(1, (Date.now() - startDate) / (1000 * 60 * 60 * 24));
 
-    return activeChallenge.participants.map((p) => {
+    return targetChallenge.participants.map((p) => {
       const isCurrentUser = p.uid === user?.uid;
       const liveDoc = memberProgressMap[p.uid];
 
@@ -893,7 +936,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         name: p.name || 'Student',
         email: p.email,
         photoURL: p.photoURL,
-        cohort: activeChallenge.code ? `Room ${activeChallenge.code}` : 'HSC Sprint',
+        cohort: targetChallenge.code ? `Room ${targetChallenge.code}` : 'HSC Sprint',
         avatarUrl: p.photoURL || '',
         activeFocus,
         completed_topics: completedTopics,
@@ -907,7 +950,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         isSquad: true,
       };
     });
-  }, [activeChallenge, user, memberProgressMap]);
+  }, [roomChallenge, user, memberProgressMap]);
 
   // Peer Arena Sorting Algorithm & Tie-Breaker Math
   const sortedPeers = useMemo(() => {
@@ -935,15 +978,17 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
 
   // Active Challenge representation
   const challenge: ActiveSprintChallenge = useMemo(() => {
+    const targetChallenge = roomChallenge;
+    const targetSprint = targetChallenge === activeChallenge ? sprint : computeSprint(targetChallenge, Date.now());
     return {
-      title: activeChallenge ? `${activeChallenge.duration}-Day Sprint Challenge` : 'No Active Sprint',
-      cohortName: activeChallenge ? `Room ${activeChallenge.code}` : 'None',
-      code: activeChallenge?.code || '',
-      totalTopics: activeChallenge?.selected_syllabus?.length || 0,
-      activePeersCount: activeChallenge?.participants?.length || 0,
-      timeRemainingStr: activeChallenge ? `${sprint.daysLeft} Days Left` : 'N/A',
+      title: targetChallenge ? `${targetChallenge.duration}-Day Sprint Challenge` : 'No Active Sprint',
+      cohortName: targetChallenge ? `Room ${targetChallenge.code}` : 'None',
+      code: targetChallenge?.code || '',
+      totalTopics: targetChallenge?.selected_syllabus?.length || 0,
+      activePeersCount: targetChallenge?.participants?.length || 0,
+      timeRemainingStr: targetChallenge ? `${targetSprint.daysLeft} Days Left` : 'N/A',
     };
-  }, [activeChallenge, sprint]);
+  }, [roomChallenge, activeChallenge, sprint]);
 
   // Real-Time Weekly Snapshots Listener
   useEffect(() => {
@@ -1049,6 +1094,10 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     try {
       await archiveChallenge(activeChallenge.challenge_id);
       await updateActiveChallengeId(user.uid, null);
+      if (attachedRoomId === activeChallenge.challenge_id) {
+        setAttachedRoomId(null);
+        setAttachedRoomChallenge(null);
+      }
       setActiveChallengeId(null);
       setActiveChallengeState(null);
       setTasks([]);
@@ -1066,6 +1115,10 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     try {
       await deleteFirestoreChallenge(activeChallenge.challenge_id);
       await updateActiveChallengeId(user.uid, null);
+      if (attachedRoomId === activeChallenge.challenge_id) {
+        setAttachedRoomId(null);
+        setAttachedRoomChallenge(null);
+      }
       setActiveChallengeId(null);
       setActiveChallengeState(null);
       setTasks([]);
