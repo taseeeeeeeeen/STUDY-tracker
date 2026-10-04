@@ -240,3 +240,21 @@ export async function toggleTopicProgressInChallenge(
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
   }
 }
+
+export async function updateChallengeDayAllocation(
+  challengeId: string,
+  dayWiseAllocation: Record<string, unknown[]>,
+  startDate: string
+): Promise<void> {
+  const challengeRef = doc(db, COLLECTION_NAME, challengeId);
+  try {
+    await updateDoc(challengeRef, {
+      day_wise_allocation: dayWiseAllocation,
+      start_date: startDate,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
+  }
+}
+

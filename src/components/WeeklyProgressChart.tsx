@@ -88,10 +88,10 @@ export const WeeklyProgressChart: React.FC<WeeklyProgressChartProps> = ({
 
           {/* Render Subject Vertical Stacked Bars */}
           {weeklyStats.map((item, index) => {
-            const barWidth = 24;
-            // 5 bars evenly spaced across 320px
-            const startX = 25;
-            const stepX = 60;
+            const barWidth = 20;
+            // 7 bars evenly spaced across 320px
+            const startX = 18;
+            const stepX = 42;
             const x = startX + index * stepX;
             const centerX = x + barWidth / 2;
 

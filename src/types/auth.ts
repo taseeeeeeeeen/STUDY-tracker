@@ -8,6 +8,7 @@ export interface AppUser {
   role: UserRole;
   createdAt?: string;
   lastLoginAt?: string;
+  joinedChallengeIds?: string[];
 }
 
 export interface AuthContextType {

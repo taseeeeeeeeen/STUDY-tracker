@@ -26,6 +26,7 @@ import {
   UserTopicProgress,
   UserProgressDoc,
   updateActiveChallengeId,
+  addJoinedChallengeId,
 } from '../services/userProgressService';
 
 interface StudyTrackContextType {
@@ -72,7 +73,27 @@ const StudyTrackContext = createContext<StudyTrackContextType | undefined>(undef
 
 const ACTIVE_CHALLENGE_STORAGE_KEY = 'studytrack_active_challenge_id';
 
-const HSC_CORE_SUBJECTS = ['Physics', 'Chemistry', 'Math', 'Biology'] as const;
+const HSC_CORE_SUBJECTS = [
+  'Physics',
+  'Chemistry',
+  'Biology',
+  'Math',
+  'Bangla',
+  'English',
+  'ICT',
+] as const;
+
+function matchSubjectCategory(name: string): (typeof HSC_CORE_SUBJECTS)[number] | null {
+  const n = (name || '').toLowerCase();
+  if (n.includes('physics') || n.includes('ফিজিক্স')) return 'Physics';
+  if (n.includes('chem') || n.includes('কেমিস্ট্রি')) return 'Chemistry';
+  if (n.includes('bio') || n.includes('জীব')) return 'Biology';
+  if (n.includes('math') || n.includes('ম্যাথ') || n.includes('গণিত') || n.includes('calc')) return 'Math';
+  if (n.includes('bangla') || n.includes('বাংলা')) return 'Bangla';
+  if (n.includes('english') || n.includes('ইংরেজি')) return 'English';
+  if (n.includes('ict') || n.includes('তথ্য')) return 'ICT';
+  return null;
+}
 
 export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user } = useAuth();
@@ -189,11 +210,16 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         const mappedTasks: Task[] = (challengeDoc.selected_syllabus || []).map((top, idx) => {
           const prog = userProgress[top.id] || { theory: false, practice: false };
 
-          let sub: 'Physics' | 'Chemistry' | 'Math' | 'Biology' = 'Physics';
+          let sub: (typeof HSC_CORE_SUBJECTS)[number] = 'Physics';
           const subLower = (top.subject || '').toLowerCase();
-          if (subLower.includes('chem')) sub = 'Chemistry';
-          else if (subLower.includes('math') || subLower.includes('calc')) sub = 'Math';
-          else if (subLower.includes('bio')) sub = 'Biology';
+          if (subLower.includes('bangla') || subLower.includes('বাংলা')) sub = 'Bangla';
+          else if (subLower.includes('english') || subLower.includes('ইংরেজি')) sub = 'English';
+          else if (subLower.includes('ict') || subLower.includes('তথ্য')) sub = 'ICT';
+          else if (subLower.includes('chem') || subLower.includes('কেমিস্ট্রি')) sub = 'Chemistry';
+          else if (subLower.includes('math') || subLower.includes('ম্যাথ') || subLower.includes('গণিত') || subLower.includes('calc')) sub = 'Math';
+          else if (subLower.includes('bio') || subLower.includes('জীব')) sub = 'Biology';
+          else if (subLower.includes('phys') || subLower.includes('ফিজিক্স')) sub = 'Physics';
+          else sub = 'Physics';
 
           const timeElapsed = Date.now() - challengeCreatedAt;
           const isExpired = timeElapsed >= 24 * 60 * 60 * 1000;
@@ -463,19 +489,26 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   const todayCompletionPercentage = totalUnits > 0 ? (completedUnits / totalUnits) * 100 : 0;
   const completedTopicsCount = tasks.filter((t) => t.theoryCompleted && t.practiceCompleted).length;
 
-  // Real Weekly stats computed purely from real tasks in active challenge
+  // Real Weekly stats computed from user's persisted progress in hscMasterSyllabus across all 7 core subjects
   const weeklyStats: SubjectWeeklyStat[] = useMemo(() => {
     const subjectConfig: Record<string, { label: string; color: string; bgColor: string }> = {
       Physics: { label: 'Phys', color: '#003820', bgColor: '#6ffbbe' },
       Chemistry: { label: 'Chem', color: '#003820', bgColor: '#6ffbbe' },
-      Math: { label: 'Math', color: '#003820', bgColor: '#6ffbbe' },
       Biology: { label: 'Bio', color: '#003820', bgColor: '#6ffbbe' },
+      Math: { label: 'Math', color: '#003820', bgColor: '#6ffbbe' },
+      Bangla: { label: 'Bang', color: '#003820', bgColor: '#6ffbbe' },
+      English: { label: 'Eng', color: '#003820', bgColor: '#6ffbbe' },
+      ICT: { label: 'ICT', color: '#003820', bgColor: '#6ffbbe' },
     };
 
     return HSC_CORE_SUBJECTS.map((subject) => {
-      const subjectTasks = tasks.filter((t) => t.subject === subject);
-      const done = subjectTasks.filter((t) => t.theoryCompleted && t.practiceCompleted).length;
-      const total = subjectTasks.length;
+      const matchingSubjects = hscMasterSyllabus.filter(
+        (s) => matchSubjectCategory(s.name) === subject
+      );
+
+      const allTopics = matchingSubjects.flatMap((s) => s.chapters.flatMap((c) => c.topics));
+      const done = allTopics.filter((t) => t.is_theory_done && t.is_practice_done).length;
+      const total = allTopics.length;
       const remaining = Math.max(0, total - done);
 
       return {
@@ -488,26 +521,17 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         bgColor: subjectConfig[subject]?.bgColor || '#6ffbbe',
       };
     });
-  }, [tasks]);
+  }, [hscMasterSyllabus]);
 
-  // Real Streak calculated from user's completion timestamp and progress
+  // Real Streak calculated from user's first login date (createdAt in users/{uid})
   const streakDays = useMemo(() => {
-    if (!activeChallenge || !user) return 0;
-    const participant = activeChallenge.participants?.find((p) => p.uid === user.uid);
-    if (!participant || !participant.last_completion_timestamp || participant.completed_topics === 0) {
-      return 0;
-    }
-    const diffMs = Date.now() - participant.last_completion_timestamp;
-    const diffHours = diffMs / (1000 * 60 * 60);
-
-    // If active within last 48 hours, calculate active streak count from completed topics
-    if (diffHours <= 48) {
-      const startDate = new Date(activeChallenge.start_date).getTime();
-      const elapsedDays = Math.max(1, Math.floor((Date.now() - startDate) / (1000 * 60 * 60 * 24)) + 1);
-      return Math.min(elapsedDays, Math.max(1, Math.ceil(participant.completed_topics)));
-    }
-    return 0;
-  }, [activeChallenge, user]);
+    if (!user?.createdAt) return 1;
+    const createdTime = new Date(user.createdAt).getTime();
+    if (isNaN(createdTime)) return 1;
+    const now = Date.now();
+    const diffMs = Math.max(0, now - createdTime);
+    return Math.max(1, Math.floor(diffMs / 86400000) + 1);
+  }, [user?.createdAt]);
 
   // Real Active Sprint state computed from active challenge
   const sprint: ActiveSprint = useMemo(() => {

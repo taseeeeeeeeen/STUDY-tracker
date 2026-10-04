@@ -31,6 +31,18 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
   const theoryOffset = subCircumference * (1 - overallTheoryPercent / 100);
   const practiceOffset = subCircumference * (1 - overallPracticePercent / 100);
 
+  // HSC Grading Scale & GPA derivation
+  const getGradeAndGPA = (pct: number) => {
+    if (pct >= 80) return { grade: 'A+', gpa: 5.0 };
+    if (pct >= 70) return { grade: 'A', gpa: 4.0 };
+    if (pct >= 60) return { grade: 'A-', gpa: 3.5 };
+    if (pct >= 50) return { grade: 'B', gpa: 3.0 };
+    if (pct >= 40) return { grade: 'C', gpa: 2.0 };
+    if (pct >= 33) return { grade: 'D', gpa: 1.0 };
+    return { grade: 'F', gpa: 0.0 };
+  };
+  const { grade, gpa } = getGradeAndGPA(grandProgressPercent);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
       {/* Left/Center Hero: Total HSC Curriculum Completion (8 cols) */}
@@ -305,7 +317,7 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
               Target Range
             </span>
             <span className="text-4xl font-extrabold tracking-tight">
-              Grade {grandProgressPercent >= 80 ? 'A+' : grandProgressPercent >= 70 ? 'A' : 'A-'}
+              Grade {grade}
             </span>
             <span className="text-xs text-white/90 mt-1">
               {(85 + (grandProgressPercent / 100) * 14).toFixed(1)}th Percentile
@@ -316,7 +328,7 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
               workspace_premium
             </span>
             <div className="text-xs font-semibold text-[#6ffbbe] mt-1 font-mono">
-              GPA 5.00 GOAL
+              GPA {gpa.toFixed(2)}
             </div>
           </div>
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/5 pointer-events-none" />
@@ -324,40 +336,6 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
 
         {/* Metric Checklist Rows */}
         <div className="flex flex-col gap-2.5 text-xs">
-          <div className="flex items-center justify-between py-1 border-b border-[#e5eeff]/80">
-            <div className="flex items-center gap-2 text-[#404942]">
-              <span className="material-symbols-outlined text-base text-[#006c49]">schedule</span>
-              <span className="text-[#0b1c30]">Daily Study Time</span>
-            </div>
-            <span className="font-bold text-[#0b1c30] font-mono">2.8 hrs/day</span>
-          </div>
-          <div className="flex items-center justify-between py-1 border-b border-[#e5eeff]/80">
-            <div className="flex items-center gap-2 text-[#404942]">
-              <span className="material-symbols-outlined text-base text-[#006c49]">
-                assignment_turned_in
-              </span>
-              <span className="text-[#0b1c30]">Past Papers Solved</span>
-            </div>
-            <span className="font-bold text-[#0b1c30] font-mono">12 Papers</span>
-          </div>
-          <div className="flex items-center justify-between py-1 border-b border-[#e5eeff]/80">
-            <div className="flex items-center gap-2 text-[#404942]">
-              <span className="material-symbols-outlined text-base text-[#006c49]">
-                check_circle
-              </span>
-              <span className="text-[#0b1c30]">CQ Practice Accuracy</span>
-            </div>
-            <span className="font-bold text-[#0b1c30] font-mono">88.5%</span>
-          </div>
-          <div className="flex items-center justify-between py-1">
-            <div className="flex items-center gap-2 text-[#404942]">
-              <span className="material-symbols-outlined text-base text-[#006c49]">
-                history_toggle_off
-              </span>
-              <span className="text-[#0b1c30]">Avg. Time per MCQ</span>
-            </div>
-            <span className="font-bold text-[#0b1c30] font-mono">48 sec</span>
-          </div>
         </div>
 
         {/* Action Button */}

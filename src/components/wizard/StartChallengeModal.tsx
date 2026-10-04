@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface StartChallengeModalProps {
@@ -13,26 +13,13 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
   challengeData,
 }) => {
   const navigate = useNavigate();
-  const [copied, setCopied] = useState(false);
-  const [copiedCode, setCopiedCode] = useState(false);
 
   if (!isOpen || !challengeData) return null;
 
-  const jsonString = JSON.stringify(challengeData, null, 2);
-  const code = (challengeData.code as string) || '';
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(jsonString);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleCopyCode = () => {
-    if (!code) return;
-    navigator.clipboard.writeText(code);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
-  };
+  const challengeName = (challengeData.challenge_name as string) || 'Study Sprint';
+  const duration = (challengeData.duration as number) || 7;
+  const totalTopics = (challengeData.totalTopics as number) || (challengeData.selected_syllabus as unknown[])?.length || 0;
+  const totalHours = (challengeData.totalEstimatedHours as number) || 0;
 
   const handleGoDashboard = () => {
     onClose();
@@ -46,7 +33,7 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
-      <div className="bg-white rounded-3xl p-6 max-w-2xl w-full shadow-2xl border border-[#c0c9c0]/40 flex flex-col gap-4 max-h-[90vh] overflow-hidden">
+      <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-[#c0c9c0]/40 flex flex-col gap-5 max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between pb-3 border-b border-[#e5eeff]">
           <div className="flex items-center gap-3">
@@ -70,47 +57,26 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
           </button>
         </div>
 
-        {/* Room Code Share Card */}
-        {code && (
-          <div className="p-4 bg-gradient-to-r from-[#003820] to-[#005232] rounded-2xl text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+        {/* Summary Details */}
+        <div className="p-4 bg-[#eff4ff] rounded-2xl border border-[#c0c9c0]/40 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[#0b1c30]">{challengeName}</span>
+            <span className="px-2.5 py-0.5 rounded-full bg-[#003820] text-white text-[10px] font-mono font-bold">
+              {duration} Days
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[#c0c9c0]/30 text-xs text-[#404942]">
             <div>
-              <span className="text-[10px] font-mono text-[#6ffbbe] uppercase tracking-wider font-bold block">
-                Room Code (Share with Friends)
-              </span>
-              <span className="text-2xl font-black font-mono tracking-wider text-white">
-                {code}
-              </span>
+              <span className="block text-[10px] uppercase font-mono text-[#707971]">Topics</span>
+              <span className="font-bold text-[#0b1c30]">{totalTopics} Topics</span>
             </div>
-            <button
-              onClick={handleCopyCode}
-              className="px-4 py-2 bg-[#6ffbbe] text-[#003820] rounded-xl text-xs font-bold hover:bg-[#8bfdcf] transition-all flex items-center gap-1.5 self-start sm:self-center shadow-xs cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-sm">
-                {copiedCode ? 'done' : 'content_copy'}
-              </span>
-              <span>{copiedCode ? 'Code Copied!' : 'Copy Code'}</span>
-            </button>
+            {totalHours > 0 && (
+              <div>
+                <span className="block text-[10px] uppercase font-mono text-[#707971]">Est. Study Load</span>
+                <span className="font-bold text-[#006c49] font-mono">~{totalHours} Hours</span>
+              </div>
+            )}
           </div>
-        )}
-
-        {/* JSON Preview container */}
-        <div className="flex flex-col gap-1.5 flex-1 overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-[#404942]">
-            <span className="font-semibold">Sprint Details</span>
-            <button
-              onClick={handleCopy}
-              className="text-[#006c49] hover:underline flex items-center gap-1 font-mono text-[11px] cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-sm">
-                {copied ? 'done' : 'content_copy'}
-              </span>
-              {copied ? 'Copied Details!' : 'Copy JSON'}
-            </button>
-          </div>
-
-          <pre className="p-4 rounded-xl bg-[#0b1c30] text-[#6ffbbe] font-mono text-xs overflow-auto flex-1 max-h-[260px] border border-[#213145] leading-relaxed">
-            {jsonString}
-          </pre>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center justify-between pt-3 border-t border-[#e5eeff] gap-2">
@@ -122,7 +88,7 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
               onClick={handleGoPeerArena}
               className="px-4 py-2 rounded-xl bg-white hover:bg-[#eff4ff] text-[#0b1c30] text-xs font-bold border border-[#c0c9c0]/40 transition-all cursor-pointer"
             >
-              Peer Arena
+              Go to Peer Arena
             </button>
             <button
               onClick={handleGoDashboard}
@@ -136,3 +102,4 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
     </div>
   );
 };
+

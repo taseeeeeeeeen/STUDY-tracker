@@ -16,12 +16,20 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
   const [paperFilter, setPaperFilter] = useState<'all' | '1st' | '2nd'>('all');
   // Sort by: 'completion' | 'weightage' | 'pending'
   const [sortBy, setSortBy] = useState<'completion' | 'weightage' | 'pending'>('completion');
-  // Track expanded subject IDs (default Chemistry 2nd Paper expanded like mockup)
-  const [expandedSubjectIds, setExpandedSubjectIds] = useState<string[]>(['chem-2nd']);
+  // Track expanded subject IDs (all subjects start collapsed)
+  const [expandedSubjectIds, setExpandedSubjectIds] = useState<string[]>([]);
+  // Track expanded chapter IDs
+  const [expandedChapterIds, setExpandedChapterIds] = useState<string[]>([]);
 
   const toggleExpand = (subjectId: string) => {
     setExpandedSubjectIds((prev) =>
       prev.includes(subjectId) ? prev.filter((id) => id !== subjectId) : [...prev, subjectId]
+    );
+  };
+
+  const toggleChapterExpand = (chapterId: string) => {
+    setExpandedChapterIds((prev) =>
+      prev.includes(chapterId) ? prev.filter((id) => id !== chapterId) : [...prev, chapterId]
     );
   };
 
@@ -270,172 +278,254 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
                 </div>
               </div>
 
-              {/* Requirement 4: Render Deep-Dive Accordion Content dynamically by mapping over hsc_master_syllabus state */}
+              {/* Chapter list under expanded subject */}
               {isExpanded && (
-                <div className="overflow-x-auto p-5 animate-in fade-in duration-200">
-                  <div className="flex items-center justify-between mb-3 text-xs">
+                <div className="p-5 flex flex-col gap-3 bg-[#eff4ff]/20 border-t border-[#e5eeff] animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between text-xs">
                     <h4 className="font-bold text-[#0b1c30] uppercase tracking-wider text-[11px]">
-                      Unit Drill & Theory Matrix (Short Syllabus Aligned)
+                      Chapters & Units ({subject.chapters.length} Total)
                     </h4>
                     <span className="text-[#707971] font-mono text-[11px]">
-                      Click Theory or Practice buttons below to update live matrix
+                      Click a chapter to expand topic breakdown
                     </span>
                   </div>
 
-                  <table className="w-full text-left text-xs border-collapse min-w-[720px]">
-                    <thead>
-                      <tr className="bg-[#eff4ff] text-[#404942] font-semibold text-[11px]">
-                        <th className="py-2.5 px-3 rounded-l-xl">Chapter / Unit</th>
-                        <th className="py-2.5 px-3">Weightage</th>
-                        <th className="py-2.5 px-3">Theory Status (Weight = 1)</th>
-                        <th className="py-2.5 px-3">Practice / CQ (Weight = 1)</th>
-                        <th className="py-2.5 px-3">MCQ Drills</th>
-                        <th className="py-2.5 px-3 text-right rounded-r-xl">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#e5eeff]">
-                      {subject.chapters.flatMap((chapter) =>
-                        chapter.topics.map((topic) => {
-                          const isFullyDone = topic.is_theory_done && topic.is_practice_done;
-                          const isPartiallyDone =
-                            !isFullyDone && (topic.is_theory_done || topic.is_practice_done);
+                  <div className="flex flex-col gap-3">
+                    {subject.chapters.map((chapter) => {
+                      const isChapterExpanded = expandedChapterIds.includes(chapter.id);
+                      const totalTopicsInChapter = chapter.topics.length;
+                      const completedTopicsInChapter = chapter.topics.filter(
+                        (t) => t.is_theory_done && t.is_practice_done
+                      ).length;
+                      const theoryDoneCount = chapter.topics.filter((t) => t.is_theory_done).length;
+                      const practiceDoneCount = chapter.topics.filter((t) => t.is_practice_done).length;
+                      const chapterProgressPercent =
+                        totalTopicsInChapter > 0
+                          ? ((theoryDoneCount + practiceDoneCount) / (totalTopicsInChapter * 2)) * 100
+                          : 0;
+                      const isChapterFullyDone =
+                        totalTopicsInChapter > 0 &&
+                        chapter.topics.every((t) => t.is_theory_done && t.is_practice_done);
 
-                          const mcqPercent =
-                            topic.mcqTotal > 0
-                              ? Math.round((topic.mcqDone / topic.mcqTotal) * 100)
-                              : 0;
-
-                          return (
-                            <tr
-                              key={topic.id}
-                              className="hover:bg-[#eff4ff]/40 transition-colors"
-                            >
-                              <td className="py-3 px-3">
-                                <div className="font-bold text-[#0b1c30]">
-                                  {topic.title}
-                                </div>
-                                <div className="text-[11px] text-[#404942]">
-                                  {topic.subconcept}
-                                </div>
-                              </td>
-
-                              <td className="py-3 px-3 font-mono font-semibold text-[#0b1c30] whitespace-nowrap">
-                                {topic.weightageMarks} Marks ({topic.cqTarget} CQ)
-                              </td>
-
-                              {/* Interactive Theory Toggle Button */}
-                              <td className="py-3 px-3">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    onToggleTheory(subject.id, chapter.id, topic.id)
-                                  }
-                                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer shadow-xs ${
-                                    topic.is_theory_done
-                                      ? 'bg-[#003820] text-white hover:bg-[#0f5132]'
-                                      : 'bg-[#e5eeff] text-[#404942] hover:bg-[#dce9ff]'
-                                  }`}
-                                  title="Click to toggle Theory completion (1 point)"
-                                >
-                                  <span className="material-symbols-outlined text-sm leading-none">
-                                    {topic.is_theory_done ? 'check' : 'radio_button_unchecked'}
-                                  </span>
-                                  <span>{topic.is_theory_done ? 'Theory Done' : 'Unread'}</span>
-                                </button>
-                              </td>
-
-                              {/* Interactive Practice Toggle Button */}
-                              <td className="py-3 px-3">
-                                <div className="flex flex-col gap-1 w-36">
-                                  <div className="flex justify-between items-center text-[11px]">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        onTogglePractice(subject.id, chapter.id, topic.id)
-                                      }
-                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold text-[10px] transition-all cursor-pointer ${
-                                        topic.is_practice_done
-                                          ? 'bg-[#6ffbbe]/40 text-[#002111] hover:bg-[#6ffbbe]/60'
-                                          : 'bg-[#e5eeff] text-[#404942] hover:bg-[#dce9ff]'
-                                      }`}
-                                      title="Click to toggle Practice/CQ completion (1 point)"
-                                    >
-                                      <span className="material-symbols-outlined text-xs">
-                                        {topic.is_practice_done
-                                          ? 'check_circle'
-                                          : 'radio_button_unchecked'}
-                                      </span>
-                                      <span>
-                                        {topic.is_practice_done
-                                          ? `${topic.cqTarget}/${topic.cqTarget} CQ`
-                                          : `${topic.cqDone}/${topic.cqTarget} CQ`}
-                                      </span>
-                                    </button>
-                                    <span
-                                      className={`font-mono text-[10px] font-bold ${
-                                        topic.is_practice_done ? 'text-[#006c49]' : 'text-[#707971]'
-                                      }`}
-                                    >
-                                      {topic.is_practice_done ? '100%' : 'Pending'}
+                      return (
+                        <div
+                          key={chapter.id}
+                          className="bg-white rounded-xl border border-[#c0c9c0]/30 shadow-2xs overflow-hidden transition-all duration-200"
+                        >
+                          {/* Chapter Header Row */}
+                          <div
+                            onClick={() => toggleChapterExpand(chapter.id)}
+                            className={`p-4 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                              isChapterExpanded
+                                ? 'bg-[#eff4ff]/70 border-b border-[#e5eeff]'
+                                : 'hover:bg-[#eff4ff]/30'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <button
+                                type="button"
+                                aria-label={isChapterExpanded ? 'Collapse chapter' : 'Expand chapter'}
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+                                  isChapterExpanded
+                                    ? 'bg-[#003820] text-white'
+                                    : 'bg-[#eff4ff] text-[#404942]'
+                                }`}
+                              >
+                                <span className="material-symbols-outlined text-sm">
+                                  {isChapterExpanded ? 'expand_less' : 'expand_more'}
+                                </span>
+                              </button>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h5 className="text-xs sm:text-sm font-bold text-[#0b1c30]">
+                                    {chapter.title}
+                                  </h5>
+                                  {isChapterFullyDone && (
+                                    <span className="bg-[#6ffbbe]/30 text-[#002111] px-2 py-0.5 rounded text-[10px] font-bold font-mono">
+                                      Mastered
                                     </span>
-                                  </div>
-                                  <div className="w-full bg-[#e5eeff] h-1.5 rounded-full overflow-hidden">
-                                    <div
-                                      className={`h-full transition-all duration-300 ${
-                                        topic.is_practice_done ? 'bg-[#006c49]' : 'bg-[#c0c9c0]'
-                                      }`}
-                                      style={{
-                                        width: topic.is_practice_done ? '100%' : '30%',
-                                      }}
-                                    />
-                                  </div>
+                                  )}
                                 </div>
-                              </td>
-
-                              {/* MCQ Drills */}
-                              <td className="py-3 px-3">
-                                <div className="flex flex-col gap-1 w-28">
-                                  <div className="flex justify-between text-[11px] font-mono">
-                                    <span className="font-semibold text-[#0b1c30]">
-                                      {topic.mcqDone}/{topic.mcqTotal}
-                                    </span>
-                                    <span className="text-[#006c49] font-medium">
-                                      {mcqPercent}%
-                                    </span>
-                                  </div>
-                                  <div className="w-full bg-[#e5eeff] h-1.5 rounded-full overflow-hidden">
-                                    <div
-                                      className="bg-[#006c49] h-full transition-all duration-300"
-                                      style={{ width: `${mcqPercent}%` }}
-                                    />
-                                  </div>
+                                <div className="text-[11px] text-[#404942] mt-0.5">
+                                  {completedTopicsInChapter} of {totalTopicsInChapter} topics mastered • {theoryDoneCount} theory, {practiceDoneCount} practice
                                 </div>
-                              </td>
+                              </div>
+                            </div>
 
-                              {/* Overall Topic Status Badge */}
-                              <td className="py-3 px-3 text-right">
-                                {isFullyDone ? (
-                                  <span className="inline-flex items-center gap-1.5 bg-[#6ffbbe]/30 text-[#002111] px-2.5 py-0.5 rounded-full text-[11px] font-semibold">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-[#006c49]" />
-                                    Completed
-                                  </span>
-                                ) : isPartiallyDone ? (
-                                  <span className="inline-flex items-center gap-1.5 bg-[#e5eeff] text-[#003820] font-semibold px-2.5 py-0.5 rounded-full text-[11px]">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-[#003820] animate-pulse" />
-                                    In Progress
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 bg-[#eff4ff] text-[#707971] px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[#c0c9c0]/30">
-                                    Pending
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
+                            <div className="flex items-center gap-3 self-end sm:self-auto">
+                              <div className="w-24 sm:w-32 bg-[#e5eeff] h-2 rounded-full overflow-hidden hidden xs:block">
+                                <div
+                                  className="bg-[#003820] h-full transition-all duration-300"
+                                  style={{ width: `${chapterProgressPercent}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-bold font-mono text-[#003820] tabular-nums min-w-[36px] text-right">
+                                {Math.round(chapterProgressPercent)}%
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Chapter Topics Table */}
+                          {isChapterExpanded && (
+                            <div className="overflow-x-auto p-4 bg-white animate-in fade-in duration-150">
+                              <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+                                <thead>
+                                  <tr className="bg-[#eff4ff] text-[#404942] font-semibold text-[11px]">
+                                    <th className="py-2.5 px-3 rounded-l-xl">Topic / Unit</th>
+                                    <th className="py-2.5 px-3">Weightage</th>
+                                    <th className="py-2.5 px-3">Theory Status (Weight = 1)</th>
+                                    <th className="py-2.5 px-3">Practice / CQ (Weight = 1)</th>
+                                    <th className="py-2.5 px-3">MCQ Drills</th>
+                                    <th className="py-2.5 px-3 text-right rounded-r-xl">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[#e5eeff]">
+                                  {chapter.topics.map((topic) => {
+                                    const isFullyDone = topic.is_theory_done && topic.is_practice_done;
+                                    const isPartiallyDone =
+                                      !isFullyDone && (topic.is_theory_done || topic.is_practice_done);
+
+                                    const mcqPercent =
+                                      topic.mcqTotal > 0
+                                        ? Math.round((topic.mcqDone / topic.mcqTotal) * 100)
+                                        : 0;
+
+                                    return (
+                                      <tr
+                                        key={topic.id}
+                                        className="hover:bg-[#eff4ff]/40 transition-colors"
+                                      >
+                                        <td className="py-3 px-3">
+                                          <div className="font-bold text-[#0b1c30]">
+                                            {topic.title}
+                                          </div>
+                                          <div className="text-[11px] text-[#404942]">
+                                            {topic.subconcept}
+                                          </div>
+                                        </td>
+
+                                        <td className="py-3 px-3 font-mono font-semibold text-[#0b1c30] whitespace-nowrap">
+                                          {topic.weightageMarks} Marks ({topic.cqTarget} CQ)
+                                        </td>
+
+                                        {/* Interactive Theory Toggle Button */}
+                                        <td className="py-3 px-3">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              onToggleTheory(subject.id, chapter.id, topic.id)
+                                            }
+                                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer shadow-xs ${
+                                              topic.is_theory_done
+                                                ? 'bg-[#003820] text-white hover:bg-[#0f5132]'
+                                                : 'bg-[#e5eeff] text-[#404942] hover:bg-[#dce9ff]'
+                                            }`}
+                                            title="Click to toggle Theory completion (1 point)"
+                                          >
+                                            <span className="material-symbols-outlined text-sm leading-none">
+                                              {topic.is_theory_done ? 'check' : 'radio_button_unchecked'}
+                                            </span>
+                                            <span>{topic.is_theory_done ? 'Theory Done' : 'Unread'}</span>
+                                          </button>
+                                        </td>
+
+                                        {/* Interactive Practice Toggle Button */}
+                                        <td className="py-3 px-3">
+                                          <div className="flex flex-col gap-1 w-36">
+                                            <div className="flex justify-between items-center text-[11px]">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  onTogglePractice(subject.id, chapter.id, topic.id)
+                                                }
+                                                className={`flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold text-[10px] transition-all cursor-pointer ${
+                                                  topic.is_practice_done
+                                                    ? 'bg-[#6ffbbe]/40 text-[#002111] hover:bg-[#6ffbbe]/60'
+                                                    : 'bg-[#e5eeff] text-[#404942] hover:bg-[#dce9ff]'
+                                                }`}
+                                                title="Click to toggle Practice/CQ completion (1 point)"
+                                              >
+                                                <span className="material-symbols-outlined text-xs">
+                                                  {topic.is_practice_done
+                                                    ? 'check_circle'
+                                                    : 'radio_button_unchecked'}
+                                                </span>
+                                                <span>
+                                                  {topic.is_practice_done
+                                                    ? `${topic.cqTarget}/${topic.cqTarget} CQ`
+                                                    : `${topic.cqDone}/${topic.cqTarget} CQ`}
+                                                </span>
+                                              </button>
+                                              <span
+                                                className={`font-mono text-[10px] font-bold ${
+                                                  topic.is_practice_done ? 'text-[#006c49]' : 'text-[#707971]'
+                                                }`}
+                                              >
+                                                {topic.is_practice_done ? '100%' : 'Pending'}
+                                              </span>
+                                            </div>
+                                            <div className="w-full bg-[#e5eeff] h-1.5 rounded-full overflow-hidden">
+                                              <div
+                                                className={`h-full transition-all duration-300 ${
+                                                  topic.is_practice_done ? 'bg-[#006c49]' : 'bg-[#c0c9c0]'
+                                                }`}
+                                                style={{
+                                                  width: topic.is_practice_done ? '100%' : '30%',
+                                                }}
+                                              />
+                                            </div>
+                                          </div>
+                                        </td>
+
+                                        {/* MCQ Drills */}
+                                        <td className="py-3 px-3">
+                                          <div className="flex flex-col gap-1 w-28">
+                                            <div className="flex justify-between text-[11px] font-mono">
+                                              <span className="font-semibold text-[#0b1c30]">
+                                                {topic.mcqDone}/{topic.mcqTotal}
+                                              </span>
+                                              <span className="text-[#006c49] font-medium">
+                                                {mcqPercent}%
+                                              </span>
+                                            </div>
+                                            <div className="w-full bg-[#e5eeff] h-1.5 rounded-full overflow-hidden">
+                                              <div
+                                                className="bg-[#006c49] h-full transition-all duration-300"
+                                                style={{ width: `${mcqPercent}%` }}
+                                              />
+                                            </div>
+                                          </div>
+                                        </td>
+
+                                        {/* Overall Topic Status Badge */}
+                                        <td className="py-3 px-3 text-right">
+                                          {isFullyDone ? (
+                                            <span className="inline-flex items-center gap-1.5 bg-[#6ffbbe]/30 text-[#002111] px-2.5 py-0.5 rounded-full text-[11px] font-semibold">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-[#006c49]" />
+                                              Completed
+                                            </span>
+                                          ) : isPartiallyDone ? (
+                                            <span className="inline-flex items-center gap-1.5 bg-[#e5eeff] text-[#003820] font-semibold px-2.5 py-0.5 rounded-full text-[11px]">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-[#003820] animate-pulse" />
+                                              In Progress
+                                            </span>
+                                          ) : (
+                                            <span className="inline-flex items-center gap-1 bg-[#eff4ff] text-[#707971] px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[#c0c9c0]/30">
+                                              Pending
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

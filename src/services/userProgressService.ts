@@ -44,6 +44,27 @@ export async function updateActiveChallengeId(uid: string, challengeId: string |
   }
 }
 
+export async function addJoinedChallengeId(uid: string, challengeId: string): Promise<void> {
+  const userDocRef = doc(db, 'users', uid);
+  try {
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(userDocRef);
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const currentIds: string[] = Array.isArray(data.joinedChallengeIds) ? data.joinedChallengeIds : [];
+      if (!currentIds.includes(challengeId)) {
+        currentIds.push(challengeId);
+        transaction.update(userDocRef, {
+          joinedChallengeIds: currentIds,
+          lastLoginAt: new Date().toISOString(),
+        });
+      }
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
+  }
+}
+
 export function subscribeUserProgress(
   uid: string,
   onData: (progress: UserProgressDoc | null) => void,

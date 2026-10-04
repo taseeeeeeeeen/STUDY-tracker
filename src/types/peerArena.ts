@@ -2,7 +2,7 @@ import { ParticipantTopicProgress } from './challenge';
 
 export interface PeerContender {
   id: string;
-  uid?: string;
+  uid: string;
   name: string;
   cohort: string;
   avatarUrl: string;
@@ -18,6 +18,10 @@ export interface PeerContender {
   topic_progress?: Record<string, ParticipantTopicProgress>;
   email?: string;
   photoURL?: string;
+  completedTopics?: number;
+  totalTopics?: number;
+  scorePercent?: number;
+  rank?: number;
 }
 
 export interface ActiveSprintChallenge {

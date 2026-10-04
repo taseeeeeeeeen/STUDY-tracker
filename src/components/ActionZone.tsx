@@ -17,9 +17,13 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
   onOpenAddTopic,
 }) => {
   const [filter, setFilter] = useState<'all' | 'priority' | 'completed'>('all');
+  const [subjectFilter, setSubjectFilter] = useState<string>('All');
 
-  // Filter tasks based on selected tab
+  // Filter tasks based on selected tab and subject dropdown
   const filteredTasks = tasks.filter((task) => {
+    if (subjectFilter !== 'All' && task.subject.toLowerCase() !== subjectFilter.toLowerCase()) {
+      return false;
+    }
     const isCompleted = task.theoryCompleted && task.practiceCompleted;
     if (filter === 'all') return true;
     if (filter === 'completed') return isCompleted;
@@ -28,6 +32,10 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
     }
     return true;
   });
+
+  const subjectTasks = subjectFilter === 'All'
+    ? tasks
+    : tasks.filter((t) => t.subject.toLowerCase() === subjectFilter.toLowerCase());
 
   // Calculate subject tag style
   const getSubjectBadge = (subject: string) => {
@@ -40,6 +48,12 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
         return 'bg-[#e5eeff] text-[#0b1c30] border-[#c0c9c0]/30';
       case 'Biology':
         return 'bg-[#6cf8bb]/30 text-[#002113] border-[#6cf8bb]/60';
+      case 'Bangla':
+        return 'bg-[#eff4ff] text-[#003820] border-[#c0c9c0]/30';
+      case 'English':
+        return 'bg-[#e5eeff] text-[#0b1c30] border-[#c0c9c0]/30';
+      case 'ICT':
+        return 'bg-[#6ffbbe]/30 text-[#003820] border-[#6ffbbe]/60';
       default:
         return 'bg-[#eff4ff] text-[#404942] border-[#c0c9c0]/30';
     }
@@ -56,6 +70,10 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
         return 'bg-[#2d6a48]';
       case 'Biology':
         return 'bg-[#10b981]';
+      case 'Bangla':
+      case 'English':
+      case 'ICT':
+        return 'bg-[#003820]';
       default:
         return 'bg-[#003820]';
     }
@@ -70,42 +88,63 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
             Today's Study Plan
           </h2>
           <span className="px-2.5 py-0.5 rounded-full bg-[#e5eeff] text-[#0b1c30] text-xs font-semibold font-mono tabular-nums">
-            {tasks.length} Topics
+            {subjectTasks.length} Topics
           </span>
         </div>
 
-        {/* Filter Tabs */}
-        <div className="inline-flex p-1 bg-[#e5eeff] rounded-xl gap-1">
-          <button
-            onClick={() => setFilter('all')}
-            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-              filter === 'all'
-                ? 'bg-white text-[#0b1c30] shadow-xs'
-                : 'text-[#404942] hover:text-[#0b1c30]'
-            }`}
-          >
-            All Topics ({tasks.length})
-          </button>
-          <button
-            onClick={() => setFilter('priority')}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-              filter === 'priority'
-                ? 'bg-white text-[#0b1c30] shadow-xs'
-                : 'text-[#404942] hover:text-[#0b1c30]'
-            }`}
-          >
-            Priority
-          </button>
-          <button
-            onClick={() => setFilter('completed')}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-              filter === 'completed'
-                ? 'bg-white text-[#0b1c30] shadow-xs'
-                : 'text-[#404942] hover:text-[#0b1c30]'
-            }`}
-          >
-            Completed
-          </button>
+        {/* Filter Toolbar: Subject Dropdown + Filter Tabs */}
+        <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-[#404942] font-semibold">Subject</span>
+            <select
+              value={subjectFilter}
+              onChange={(e) => setSubjectFilter(e.target.value)}
+              className="text-xs bg-[#e5eeff] text-[#0b1c30] font-semibold py-1 px-2.5 rounded-xl border border-[#c0c9c0]/30 outline-none cursor-pointer focus:bg-white focus:border-[#003820] transition-colors"
+            >
+              <option value="All">All</option>
+              <option value="Physics">Physics</option>
+              <option value="Chemistry">Chemistry</option>
+              <option value="Biology">Biology</option>
+              <option value="Math">Math</option>
+              <option value="Bangla">Bangla</option>
+              <option value="English">English</option>
+              <option value="ICT">ICT</option>
+            </select>
+          </div>
+
+          {/* Filter Tabs */}
+          <div className="inline-flex p-1 bg-[#e5eeff] rounded-xl gap-1">
+            <button
+              onClick={() => setFilter('all')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                filter === 'all'
+                  ? 'bg-white text-[#0b1c30] shadow-xs'
+                  : 'text-[#404942] hover:text-[#0b1c30]'
+              }`}
+            >
+              All Topics ({subjectTasks.length})
+            </button>
+            <button
+              onClick={() => setFilter('priority')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                filter === 'priority'
+                  ? 'bg-white text-[#0b1c30] shadow-xs'
+                  : 'text-[#404942] hover:text-[#0b1c30]'
+              }`}
+            >
+              Priority
+            </button>
+            <button
+              onClick={() => setFilter('completed')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                filter === 'completed'
+                  ? 'bg-white text-[#0b1c30] shadow-xs'
+                  : 'text-[#404942] hover:text-[#0b1c30]'
+              }`}
+            >
+              Completed
+            </button>
+          </div>
         </div>
       </div>
 

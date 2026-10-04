@@ -36,14 +36,15 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'name', 'email', 'role']) &&
-        data.keys().hasOnly(['uid', 'name', 'email', 'role', 'photoURL', 'createdAt', 'lastLoginAt']) &&
+        data.keys().hasOnly(['uid', 'name', 'email', 'role', 'photoURL', 'createdAt', 'lastLoginAt', 'joinedChallengeIds']) &&
         data.uid is string && data.uid.size() <= 128 &&
         data.name is string && data.name.size() <= 128 &&
         data.email is string && data.email.size() <= 256 &&
         (data.role == 'user' || data.role == 'admin') &&
         (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024)) &&
         (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
-        (!('lastLoginAt' in data) || (data.lastLoginAt is string && data.lastLoginAt.size() <= 64));
+        (!('lastLoginAt' in data) || (data.lastLoginAt is string && data.lastLoginAt.size() <= 64)) &&
+        (!('joinedChallengeIds' in data) || (data.joinedChallengeIds is list && data.joinedChallengeIds.size() <= 100));
     }
 
     function isValidSubject(data) {

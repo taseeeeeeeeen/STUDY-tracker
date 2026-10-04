@@ -5,29 +5,31 @@ import { HSCSubjectAccordion } from './HSCSubjectAccordion';
 import { Link } from 'react-router-dom';
 
 export const HSCGrandDashboard: React.FC = () => {
-  // REQUIREMENT: Global State Simulation through Context API
-  // Changes made in Main Dashboard instantly reflect here, and vice versa!
+  // Global State Synchronization through Context API
   const {
     hscMasterSyllabus,
     hscSummary,
     toggleHSCTheory,
     toggleHSCPractice,
-    triggerToast,
   } = useStudyTrack();
 
-  // Export Matrix Action
-  const handleExportMatrix = () => {
-    const dataStr =
-      'data:text/json;charset=utf-8,' +
-      encodeURIComponent(JSON.stringify(hscMasterSyllabus, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `hsc_master_syllabus_${Date.now()}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-    triggerToast('Exported HSC Master Syllabus Matrix JSON!');
-  };
+  // Milestone 1: Live countdown to HSC 2027 Final Exam (June 6, 2027, Bangladesh Time)
+  const hscTargetTime = new Date('2027-06-06T00:00:00+06:00').getTime();
+  const daysRemaining = Math.max(0, Math.ceil((hscTargetTime - Date.now()) / 86400000));
+  const remainingTopics = Math.max(0, hscSummary.totalTopics - hscSummary.completedTopicsCount);
+  const estimatedHours = Math.round((remainingTopics * 45) / 60);
+
+  // Milestone 2: Dynamic Pace to Finish calculation (May 1, 2027 target)
+  const daysUntilPace = Math.max(
+    1,
+    Math.ceil((new Date('2027-05-01T00:00:00+06:00').getTime() - Date.now()) / 86400000)
+  );
+  const remainingChapters = Math.max(
+    0,
+    hscSummary.totalChapters - hscSummary.completedChaptersCount
+  );
+  const chaptersPerDay = remainingChapters / daysUntilPace;
+  const chaptersPerWeek = chaptersPerDay * 7;
 
   return (
     <div className="w-full flex flex-col font-sans">
@@ -84,17 +86,9 @@ export const HSCGrandDashboard: React.FC = () => {
               <div className="bg-[#eff4ff] px-3.5 py-1.5 rounded-xl flex items-center gap-2 border border-[#c0c9c0]/30 text-xs">
                 <span className="w-2 h-2 rounded-full bg-[#006c49]" />
                 <span className="text-[#0b1c30] font-medium font-mono">
-                  Session 2024-25 • Science Division
+                  Session 2025-2026 • Science Division
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={handleExportMatrix}
-                className="bg-[#003820] text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 hover:bg-[#0f5132] transition-colors shadow-xs cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-base">download</span>
-                <span>Export Syllabus</span>
-              </button>
             </div>
           </div>
 
@@ -109,7 +103,7 @@ export const HSCGrandDashboard: React.FC = () => {
           />
 
           {/* Section 3: Study Rhythm & Board Exam Milestones Quick View */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
             <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#c0c9c0]/30 flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-[#eff4ff] flex items-center justify-center text-[#003820] shrink-0 border border-[#c0c9c0]/30">
                 <span className="material-symbols-outlined text-2xl">event_available</span>
@@ -117,10 +111,10 @@ export const HSCGrandDashboard: React.FC = () => {
               <div className="flex flex-col">
                 <span className="text-[11px] text-[#404942]">HSC Final Exam Countdown</span>
                 <span className="text-base text-[#0b1c30] font-bold font-mono">
-                  78 Days Remaining
+                  {daysRemaining} Days Remaining
                 </span>
                 <span className="text-[11px] text-[#006c49] font-medium">
-                  Estimated 218 study hours needed
+                  Estimated {estimatedHours} study hours needed
                 </span>
               </div>
             </div>
@@ -132,25 +126,10 @@ export const HSCGrandDashboard: React.FC = () => {
               <div className="flex flex-col">
                 <span className="text-[11px] text-[#404942]">Weekly Target Completion</span>
                 <span className="text-base text-[#0b1c30] font-bold font-mono">
-                  4.2 / 5.0 Chapters
+                  {chaptersPerWeek.toFixed(1)} Chapters / Week
                 </span>
                 <span className="text-[11px] text-[#003820] font-medium">
-                  84% of weekly syllabus on track
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#c0c9c0]/30 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-[#eff4ff] flex items-center justify-center text-[#003820] shrink-0 border border-[#c0c9c0]/30">
-                <span className="material-symbols-outlined text-2xl">verified</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[11px] text-[#404942]">Test Paper Verification</span>
-                <span className="text-base text-[#0b1c30] font-bold">
-                  Notre Dame & RAJUK
-                </span>
-                <span className="text-[11px] text-[#006c49] font-medium">
-                  Next Test Paper: Cadet Colleges Set
+                  Based on remaining {remainingChapters} chapters
                 </span>
               </div>
             </div>

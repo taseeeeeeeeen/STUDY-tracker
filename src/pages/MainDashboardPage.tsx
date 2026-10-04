@@ -41,40 +41,14 @@ export const MainDashboardPage: React.FC = () => {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
+    timeZone: 'Asia/Dhaka',
   });
 
   return (
     <div className="w-full">
       <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-8 py-8 space-y-8">
-        {/* Sync Awareness Notification Bar */}
-        {activeChallenge ? (
-          <div className="p-3 bg-[#003820] text-white rounded-xl shadow-xs text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-[#6ffbbe]/40">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm text-[#6ffbbe]">
-                swap_horizontal_circle
-              </span>
-              <span>
-                <strong>Live Study Room:</strong> Changes sync instantly to Room{' '}
-                <strong className="text-[#6ffbbe] font-mono">{activeChallenge.code}</strong> and update your group leaderboard.
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3 shrink-0">
-              <Link
-                to="/peer-arena"
-                className="text-[#6ffbbe] hover:underline font-semibold flex items-center gap-0.5"
-              >
-                Peer Arena <span className="material-symbols-outlined text-xs">arrow_forward</span>
-              </Link>
-              <Link
-                to="/hsc-progress"
-                className="text-white/80 hover:text-white hover:underline font-semibold flex items-center gap-0.5"
-              >
-                HSC Syllabus <span className="material-symbols-outlined text-xs">arrow_forward</span>
-              </Link>
-            </div>
-          </div>
-        ) : (
+        {/* No Active Study Sprint fallback card */}
+        {!activeChallenge && (
           <div className="p-4 bg-white rounded-xl shadow-xs text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-[#c0c9c0]/30">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-[#eff4ff] rounded-full flex items-center justify-center text-[#003820] shrink-0">
@@ -112,12 +86,6 @@ export const MainDashboardPage: React.FC = () => {
               <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#6ffbbe]/30 text-[#003820] text-xs font-semibold font-mono">
                 {user?.role === 'admin' ? 'Admin' : 'Student'}
               </span>
-              {activeChallenge && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#003820] text-[#6ffbbe] text-xs font-mono font-bold border border-[#6ffbbe]/50">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#6ffbbe] animate-pulse" />
-                  {activeChallenge.code}
-                </span>
-              )}
             </div>
             <p className="text-sm text-[#404942] flex items-center gap-2">
               <span>Here is your study plan for today</span>
@@ -208,7 +176,7 @@ export const MainDashboardPage: React.FC = () => {
             />
 
             {/* Bento 3: Study Streak & Badges */}
-            <StreakWidget streakDays={streakDays} />
+            <StreakWidget streakDays={streakDays} userCreatedAt={user?.createdAt} />
           </div>
         </div>
       </div>

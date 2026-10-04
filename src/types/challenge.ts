@@ -18,10 +18,12 @@ export interface ChallengeParticipant {
 export interface FirestoreChallenge {
   challenge_id: string;
   code: string;
+  challenge_name?: string;
   created_by: string;
   creator_name?: string;
   duration: number;
   start_date: string;
+  end_date?: string;
   selected_syllabus: {
     id: string;
     subject: string;

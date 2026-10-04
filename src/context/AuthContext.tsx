@@ -43,11 +43,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // User does not exist in 'users' collection -> Create new record
         const newUser: AppUser = {
           uid: fbUser.uid,
-          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'HSC Student',
+          name: fbUser.displayName || 'Taseen Ahmed',
           email: fbUser.email || '',
           photoURL: fbUser.photoURL || '',
           role: assignedRole,
-          createdAt: new Date().toISOString(),
+          createdAt: fbUser.metadata?.creationTime ? new Date(fbUser.metadata.creationTime).toISOString() : new Date().toISOString(),
           lastLoginAt: new Date().toISOString(),
         };
 
@@ -76,8 +76,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           return {
             ...existingData,
+            name: existingData.name || fbUser.displayName || 'Taseen Ahmed',
             role: 'admin',
             lastLoginAt: nowIso,
+            createdAt: existingData.createdAt || nowIso,
           };
         } else {
           // Regular existing user update lastLoginAt
@@ -91,8 +93,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           return {
             ...existingData,
+            name: existingData.name || fbUser.displayName || 'Taseen Ahmed',
             role: existingData.role || (isAdminCandidate ? 'admin' : 'user'),
             lastLoginAt: nowIso,
+            createdAt: existingData.createdAt || nowIso,
           };
         }
       }
@@ -115,10 +119,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Fallback user state so app remains accessible
           setUser({
             uid: fbUser.uid,
-            name: fbUser.displayName || 'User',
+            name: fbUser.displayName || 'Taseen Ahmed',
             email: fbUser.email || '',
             photoURL: fbUser.photoURL || '',
             role: isAdminEmail(fbUser.email) ? 'admin' : 'user',
+            createdAt: fbUser.metadata?.creationTime ? new Date(fbUser.metadata.creationTime).toISOString() : new Date().toISOString(),
           });
         }
       } else {
