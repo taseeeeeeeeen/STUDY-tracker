@@ -17,6 +17,7 @@ import {
 import { MasterSubject } from '../../types/syllabus';
 import { subscribeMasterSyllabus, seedDefaultSyllabus } from '../../services/syllabusService';
 import { createFirestoreChallenge, updateChallengeDayAllocation } from '../../services/challengeService';
+import { dedupeSyllabusTopics } from '../../utils/challengeLogic';
 import { useAuth } from '../../context/AuthContext';
 import { useStudyTrack } from '../../context/StudyTrackContext';
 import { DroppableDayColumn } from './DroppableDayColumn';
@@ -175,11 +176,19 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           });
         });
 
+        // Apply dedupeSyllabusTopics so Theory/Practice rows collapse into one selectable topic
+        const dedupedItems = dedupeSyllabusTopics(flattenedItems).map((item) => ({
+          ...item,
+          subconcept: item.subconcept || 'Concept synthesis',
+          tag: item.tag || 'Core Concept',
+          checked: false,
+        })) as SyllabusItem[];
+
         setSyllabus((prev) => {
-          if (prev.length === 0) return flattenedItems;
+          if (prev.length === 0) return dedupedItems;
           // Preserve checked state if syllabus was already loaded
           const checkedMap = new Map(prev.map((p) => [p.id, p.checked]));
-          return flattenedItems.map((item) => ({
+          return dedupedItems.map((item) => ({
             ...item,
             checked: checkedMap.has(item.id) ? Boolean(checkedMap.get(item.id)) : false,
           }));

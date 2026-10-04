@@ -747,7 +747,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
           </section>
 
           {/* Bottom Competitive Widgets & Insights */}
-          <section className="w-full grid grid-cols-1 md:grid-cols-3 gap-6">
+          <section className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Widget 1: Next Rank Gap */}
             <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#c0c9c0]/30 flex flex-col justify-between">
               <div className="space-y-1.5">
@@ -827,51 +827,6 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                   <span>Average Progress</span>
                   <span>100%</span>
                 </div>
-              </div>
-            </div>
-
-            {/* Widget 3: Total Topics Mastered by Squad */}
-            <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#c0c9c0]/30 flex flex-col justify-between">
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-[#003820] font-bold uppercase tracking-wider flex items-center gap-1 font-mono">
-                    <span className="material-symbols-outlined text-sm">menu_book</span>
-                    Total Completed
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-[#e5eeff] text-[#0b1c30] font-mono text-[10px] font-semibold">
-                    {peers.length} Members
-                  </span>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <h4 className="text-3xl text-[#003820] font-extrabold tracking-tight font-mono tabular-nums">
-                    {peers.reduce((acc, p) => acc + p.completed_topics, 0)}
-                  </h4>
-                  <span className="text-xs text-[#404942]">Topics Completed by Group</span>
-                </div>
-                <p className="text-xs text-[#404942]">
-                  Topics completed across Physics, Chemistry, Math, and Biology.
-                </p>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-[#e5eeff]/80 flex items-center justify-between text-xs">
-                <div className="flex -space-x-1.5 overflow-hidden">
-                  <div className="inline-block h-6 w-6 rounded-full bg-[#003820] text-white text-[10px] font-bold flex items-center justify-center">
-                    RC
-                  </div>
-                  <div className="inline-block h-6 w-6 rounded-full bg-[#006c49] text-white text-[10px] font-bold flex items-center justify-center">
-                    TH
-                  </div>
-                  <div className="inline-block h-6 w-6 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
-                    EV
-                  </div>
-                  <div className="inline-block h-6 w-6 rounded-full bg-amber-700 text-white text-[10px] font-bold flex items-center justify-center">
-                    +{Math.max(1, peers.length)}
-                  </div>
-                </div>
-                <span className="text-[11px] font-mono text-[#003820] font-semibold flex items-center gap-1">
-                  <span className="material-symbols-outlined text-sm text-[#006c49]">star</span>
-                  Active Sprint
-                </span>
               </div>
             </div>
           </section>

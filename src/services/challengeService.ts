@@ -258,3 +258,47 @@ export async function updateChallengeDayAllocation(
   }
 }
 
+export function getChallengeEndDate(challenge: { start_date: string; duration: number }): Date {
+  if (!challenge || !challenge.start_date) return new Date(NaN);
+  const parts = challenge.start_date.split('T')[0].split('-');
+  let startObj: Date;
+  if (parts.length === 3) {
+    startObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  } else {
+    startObj = new Date(challenge.start_date);
+  }
+  if (isNaN(startObj.getTime())) return new Date(NaN);
+
+  const duration = Math.max(1, challenge.duration);
+  const endObj = new Date(startObj.getTime());
+  endObj.setDate(endObj.getDate() + (duration - 1));
+  endObj.setHours(23, 59, 59, 999);
+  return endObj;
+}
+
+export function isChallengeActive(
+  challenge: { start_date: string; duration: number } | null,
+  nowMs?: number
+): boolean {
+  if (!challenge) return false;
+  if (!challenge.start_date) return false;
+  if (challenge.duration <= 0) return false;
+
+  const endDate = getChallengeEndDate(challenge);
+  if (isNaN(endDate.getTime())) return false;
+
+  const parts = challenge.start_date.split('T')[0].split('-');
+  let startObj: Date;
+  if (parts.length === 3) {
+    startObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  } else {
+    startObj = new Date(challenge.start_date);
+  }
+  if (isNaN(startObj.getTime())) return false;
+  startObj.setHours(0, 0, 0, 0);
+
+  const current = nowMs !== undefined ? nowMs : Date.now();
+  return current >= startObj.getTime() && current <= endDate.getTime();
+}
+
+

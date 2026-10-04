@@ -18,6 +18,9 @@ export interface UserProgressDoc {
   topicProgress: Record<string, UserTopicProgress>;
   activeChallengeId?: string | null;
   updatedAt: string;
+  peerCode?: string;
+  savedSyllabusIds?: string[];
+  completionLog?: Record<string, { theory: number | null; practice: number | null }>;
 }
 
 const COLLECTION_NAME = 'user_progress';

@@ -1,4 +1,4 @@
-export type SubjectType = 'Physics' | 'Chemistry' | 'Math' | 'Biology' | 'History' | 'Bangla' | 'English' | 'ICT';
+export type SubjectType = string;
 
 export interface Task {
   id: string;

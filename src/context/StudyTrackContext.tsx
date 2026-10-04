@@ -4,6 +4,7 @@ import React, {
   useState,
   useEffect,
   useMemo,
+  useRef,
   ReactNode,
 } from 'react';
 import { useAuth } from './AuthContext';
@@ -19,7 +20,9 @@ import {
   findChallengeByCode,
   toggleTopicProgressInChallenge,
   subscribeChallenge,
+  isChallengeActive,
 } from '../services/challengeService';
+import { dedupeSyllabusTopics } from '../utils/challengeLogic';
 import {
   subscribeUserProgress,
   toggleUserTopicProgress,
@@ -28,6 +31,17 @@ import {
   updateActiveChallengeId,
   addJoinedChallengeId,
 } from '../services/userProgressService';
+import { WeeklySnapshot, getIsoWeekKey } from '../types/weeklySnapshot';
+import {
+  upsertMyWeeklySnapshot,
+  subscribeWeeklySnapshots,
+} from '../services/weeklySnapshotService';
+import {
+  computeSubjectWeeklyStats,
+  computeBacklog,
+  computeSprint,
+  computeOverallPercent,
+} from '../lib/progressMath';
 
 interface StudyTrackContextType {
   // Main Dashboard State
@@ -55,6 +69,7 @@ interface StudyTrackContextType {
     scorePercent: number;
     rank: number;
   })[];
+  weeklySnapshots: WeeklySnapshot[];
 
   // Action Dispatchers
   toggleDashboardTheory: (taskId: string) => Promise<void>;
@@ -98,11 +113,26 @@ function matchSubjectCategory(name: string): (typeof HSC_CORE_SUBJECTS)[number] 
 export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user } = useAuth();
 
-  // Active Challenge in Firestore (loaded from localStorage key or set by wizard/join)
-  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(() => {
-    return localStorage.getItem(ACTIVE_CHALLENGE_STORAGE_KEY) || null;
-  });
+  // Active Challenge in Firestore (ID resolution: Firestore -> LocalState -> localStorage)
+  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(null);
+  const activeChallengeIdRef = useRef<string | null>(null);
   const [activeChallenge, setActiveChallengeState] = useState<FirestoreChallenge | null>(null);
+  const isExpiringRef = useRef<string | null>(null);
+  const [weeklySnapshots, setWeeklySnapshots] = useState<WeeklySnapshot[]>([]);
+  const lastSnapshotPayloadRef = useRef<string>('');
+
+  // Sync ref to state
+  useEffect(() => {
+    activeChallengeIdRef.current = activeChallengeId;
+  }, [activeChallengeId]);
+
+  // Boot-time optimistic cache (only once per user session)
+  useEffect(() => {
+    if (user && !activeChallengeId) {
+      const cached = localStorage.getItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      if (cached) setActiveChallengeId(cached);
+    }
+  }, [user]);
 
   // Per-user global HSC progress from Firestore
   const [userProgress, setUserProgress] = useState<Record<string, UserTopicProgress>>({});
@@ -147,6 +177,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   useEffect(() => {
     if (!user) {
       setUserProgress({});
+      setActiveChallengeId(null);
+      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
       return;
     }
 
@@ -156,13 +188,20 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         if (progressDoc) {
           setUserProgress(progressDoc.topicProgress || {});
           
-          // Sync active challenge ID from Firestore profile if it's different from local state
-          if (progressDoc.activeChallengeId && progressDoc.activeChallengeId !== activeChallengeId) {
-            setActiveChallengeId(progressDoc.activeChallengeId);
-            localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, progressDoc.activeChallengeId);
+          const fsId = progressDoc.activeChallengeId || null;
+          // Single Source of Truth check using Ref to avoid stale closure
+          if (fsId !== activeChallengeIdRef.current) {
+            setActiveChallengeId(fsId);
+            if (fsId) {
+              localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, fsId);
+            } else {
+              localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+            }
           }
         } else {
           setUserProgress({});
+          setActiveChallengeId(null);
+          localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
         }
       },
       (err) => {
@@ -172,6 +211,27 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
 
     return () => unsubscribe();
   }, [user]);
+
+  // Expiry Reconciliation: Clear challenge if it's no longer active
+  useEffect(() => {
+    if (!user || !activeChallenge) return;
+
+    if (!isChallengeActive(activeChallenge)) {
+      // Prevent recursion loops
+      if (isExpiringRef.current === activeChallenge.challenge_id) return;
+      isExpiringRef.current = activeChallenge.challenge_id;
+
+      console.log('Challenge expired, clearing session:', activeChallenge.challenge_id);
+      setActiveChallengeId(null);
+      setActiveChallengeState(null);
+      setTasks([]);
+      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      updateActiveChallengeId(user.uid, null).catch(console.error);
+    } else {
+      // If it IS active, clear the ref so we can catch the next one
+      isExpiringRef.current = null;
+    }
+  }, [activeChallenge, user]);
 
   // Sync hscMasterSyllabus whenever global syllabus or user progress changes
   useEffect(() => {
@@ -194,32 +254,39 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         if (!challengeDoc) {
           setActiveChallengeState(null);
           setTasks([]);
+          localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+          setActiveChallengeId(null);
           return;
         }
 
         setActiveChallengeState(challengeDoc);
 
         // Map challenge topics & current user's progress into Main Dashboard tasks
-        const currentUserParticipant =
-          challengeDoc.participants.find((p) => p.uid === user?.uid) ||
-          challengeDoc.participants[0];
-
-        const userProgress = currentUserParticipant?.topic_progress || {};
+        // REQUIREMENT 5: Use ONLY current user's participant record, no fallback
+        const currentUserParticipant = challengeDoc.participants.find((p) => p.uid === user.uid);
+        const userTopicProgress = currentUserParticipant?.topic_progress || {};
+        
         const challengeCreatedAt = new Date(challengeDoc.start_date).getTime() || Date.now();
 
-        const mappedTasks: Task[] = (challengeDoc.selected_syllabus || []).map((top, idx) => {
-          const prog = userProgress[top.id] || { theory: false, practice: false };
+        // STEP 2 - Apply dedupeSyllabusTopics before mapping
+        const rawSyllabus = challengeDoc.selected_syllabus || [];
+        const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
 
-          let sub: (typeof HSC_CORE_SUBJECTS)[number] = 'Physics';
-          const subLower = (top.subject || '').toLowerCase();
-          if (subLower.includes('bangla') || subLower.includes('বাংলা')) sub = 'Bangla';
-          else if (subLower.includes('english') || subLower.includes('ইংরেজি')) sub = 'English';
-          else if (subLower.includes('ict') || subLower.includes('তথ্য')) sub = 'ICT';
-          else if (subLower.includes('chem') || subLower.includes('কেমিস্ট্রি')) sub = 'Chemistry';
-          else if (subLower.includes('math') || subLower.includes('ম্যাথ') || subLower.includes('গণিত') || subLower.includes('calc')) sub = 'Math';
-          else if (subLower.includes('bio') || subLower.includes('জীব')) sub = 'Biology';
-          else if (subLower.includes('phys') || subLower.includes('ফিজিক্স')) sub = 'Physics';
-          else sub = 'Physics';
+        const mappedTasks: Task[] = dedupedSyllabus.map((top, idx) => {
+          const prog = userTopicProgress[top.id] || { theory: false, practice: false };
+
+          // Replace hardcoded substring guessing with exact/prefix matching
+          const subjectStr = top.subject || 'Physics';
+          const sLower = subjectStr.toLowerCase().trim();
+          
+          let sub: string = subjectStr;
+          if (sLower.startsWith('phys') || sLower.includes('ফিজিক্স')) sub = 'Physics';
+          else if (sLower.startsWith('chem') || sLower.includes('কেমিস্ট্রি')) sub = 'Chemistry';
+          else if (sLower.startsWith('math') || sLower.includes('গণিত')) sub = 'Math';
+          else if (sLower.startsWith('bio') || sLower.includes('জীব')) sub = 'Biology';
+          else if (sLower.startsWith('bang') || sLower.includes('বাংলা')) sub = 'Bangla';
+          else if (sLower.startsWith('eng') || sLower.includes('ইংরেজি')) sub = 'English';
+          else if (sLower.startsWith('ict') || sLower.includes('তথ্য')) sub = 'ICT';
 
           const timeElapsed = Date.now() - challengeCreatedAt;
           const isExpired = timeElapsed >= 24 * 60 * 60 * 1000;
@@ -246,6 +313,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         if (error?.code === 'permission-denied' || error?.code === 'not-found') {
           setActiveChallengeState(null);
           setTasks([]);
+          setActiveChallengeId(null);
+          localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
         }
       }
     );
@@ -489,39 +558,10 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   const todayCompletionPercentage = totalUnits > 0 ? (completedUnits / totalUnits) * 100 : 0;
   const completedTopicsCount = tasks.filter((t) => t.theoryCompleted && t.practiceCompleted).length;
 
-  // Real Weekly stats computed from user's persisted progress in hscMasterSyllabus across all 7 core subjects
+  // Real Weekly stats computed from deduped challenge tasks
   const weeklyStats: SubjectWeeklyStat[] = useMemo(() => {
-    const subjectConfig: Record<string, { label: string; color: string; bgColor: string }> = {
-      Physics: { label: 'Phys', color: '#003820', bgColor: '#6ffbbe' },
-      Chemistry: { label: 'Chem', color: '#003820', bgColor: '#6ffbbe' },
-      Biology: { label: 'Bio', color: '#003820', bgColor: '#6ffbbe' },
-      Math: { label: 'Math', color: '#003820', bgColor: '#6ffbbe' },
-      Bangla: { label: 'Bang', color: '#003820', bgColor: '#6ffbbe' },
-      English: { label: 'Eng', color: '#003820', bgColor: '#6ffbbe' },
-      ICT: { label: 'ICT', color: '#003820', bgColor: '#6ffbbe' },
-    };
-
-    return HSC_CORE_SUBJECTS.map((subject) => {
-      const matchingSubjects = hscMasterSyllabus.filter(
-        (s) => matchSubjectCategory(s.name) === subject
-      );
-
-      const allTopics = matchingSubjects.flatMap((s) => s.chapters.flatMap((c) => c.topics));
-      const done = allTopics.filter((t) => t.is_theory_done && t.is_practice_done).length;
-      const total = allTopics.length;
-      const remaining = Math.max(0, total - done);
-
-      return {
-        subject,
-        label: subjectConfig[subject]?.label || subject.slice(0, 4),
-        done,
-        remaining,
-        total,
-        color: subjectConfig[subject]?.color || '#003820',
-        bgColor: subjectConfig[subject]?.bgColor || '#6ffbbe',
-      };
-    });
-  }, [hscMasterSyllabus]);
+    return computeSubjectWeeklyStats(tasks);
+  }, [tasks]);
 
   // Real Streak calculated from user's first login date (createdAt in users/{uid})
   const streakDays = useMemo(() => {
@@ -535,52 +575,12 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
 
   // Real Active Sprint state computed from active challenge
   const sprint: ActiveSprint = useMemo(() => {
-    if (!activeChallenge) {
-      return {
-        name: 'No Active Sprint',
-        phase: 'Setup a Sprint',
-        daysLeft: 0,
-        daysCompleted: 0,
-        totalDays: 7,
-        rewardBadge: 'Launch in Challenge Wizard',
-      };
-    }
-    const startDate = new Date(activeChallenge.start_date).getTime();
-    const totalDays = activeChallenge.duration || 7;
-    const elapsedDays = Math.max(0, Math.floor((Date.now() - startDate) / (1000 * 60 * 60 * 24)));
-    const daysCompleted = Math.min(totalDays, elapsedDays);
-    const daysLeft = Math.max(0, totalDays - daysCompleted);
-
-    return {
-      name: `${totalDays}-Day Study Sprint`,
-      phase: daysLeft === 0 ? 'Sprint Completed' : `Day ${daysCompleted + 1} of ${totalDays}`,
-      daysLeft,
-      daysCompleted,
-      totalDays,
-      rewardBadge: daysLeft === 0 ? '🏆 Sprint Completed!' : 'Mastery Badge at finish',
-    };
+    return computeSprint(activeChallenge, Date.now());
   }, [activeChallenge]);
 
   // Real Weekly Backlog computed from remaining challenge tasks
   const backlog: WeeklyBacklog = useMemo(() => {
-    const totalDays = activeChallenge?.duration || 7;
-    const startDate = activeChallenge?.start_date
-      ? new Date(activeChallenge.start_date).getTime()
-      : Date.now();
-    const daysRemaining = Math.max(
-      0,
-      totalDays - Math.floor((Date.now() - startDate) / (1000 * 60 * 60 * 24))
-    );
-
-    return {
-      midtermWeek: Math.max(
-        1,
-        Math.ceil((Date.now() - (startDate || Date.now())) / (1000 * 60 * 60 * 24 * 7))
-      ),
-      targetDay: `Day ${totalDays}`,
-      targetTime: '23:59',
-      daysRemaining,
-    };
+    return computeBacklog(activeChallenge, Date.now());
   }, [activeChallenge]);
 
   // HSC Summary Math
@@ -592,8 +592,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     const completedTheoryCount = allTopics.filter((t) => t.is_theory_done).length;
     const completedPracticeCount = allTopics.filter((t) => t.is_practice_done).length;
 
-    const grandProgressPercent =
-      totalTopics > 0 ? ((completedTheoryCount + completedPracticeCount) / (totalTopics * 2)) * 100 : 0;
+    const grandProgressPercent = computeOverallPercent(allTopics);
     const overallTheoryPercent = totalTopics > 0 ? (completedTheoryCount / totalTopics) * 100 : 0;
     const overallPracticePercent = totalTopics > 0 ? (completedPracticeCount / totalTopics) * 100 : 0;
 
@@ -703,6 +702,81 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     };
   }, [activeChallenge, sprint]);
 
+  // Real-Time Weekly Snapshots Listener
+  useEffect(() => {
+    if (!user) {
+      setWeeklySnapshots([]);
+      return;
+    }
+
+    const weekKey = getIsoWeekKey(new Date());
+    const unsubscribe = subscribeWeeklySnapshots(
+      weekKey,
+      (snapshots) => {
+        setWeeklySnapshots(snapshots);
+      },
+      (err) => {
+        console.error('Failed to subscribe to weekly snapshots:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Automatic Weekly Snapshot Upsert
+  useEffect(() => {
+    if (!user) return;
+
+    const timer = setTimeout(async () => {
+      const weekKey = getIsoWeekKey(new Date());
+      
+      const snapshot: WeeklySnapshot = {
+        uid: user.uid,
+        weekKey,
+        displayName: user.name || 'Student',
+        photoURL: user.photoURL,
+        activeChallengeId,
+        activeChallengeCode: activeChallenge?.code,
+        subjects: weeklyStats.map(s => ({
+          subject: s.subject,
+          done: s.done,
+          total: s.total
+        })),
+        topicsCompleted: completedTopicsCount,
+        totalPlanned: tasks.length,
+        unitsCompleted: completedUnits,
+        streakDays,
+        updatedAt: new Date().toISOString()
+      };
+
+      // Shallow compare to avoid redundant writes
+      const payloadString = JSON.stringify({
+        ...snapshot,
+        updatedAt: '' // ignore timestamp for comparison
+      });
+
+      if (payloadString !== lastSnapshotPayloadRef.current) {
+        lastSnapshotPayloadRef.current = payloadString;
+        try {
+          await upsertMyWeeklySnapshot(snapshot);
+        } catch (err) {
+          console.error('Failed to upsert weekly snapshot:', err);
+        }
+      }
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [
+    user,
+    activeChallengeId,
+    activeChallenge?.code,
+    weeklyStats,
+    completedTopicsCount,
+    tasks.length,
+    completedUnits,
+    streakDays
+  ]);
+
   return (
     <StudyTrackContext.Provider
       value={{
@@ -723,6 +797,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         challenge,
         peers,
         sortedPeers,
+        weeklySnapshots,
         toggleDashboardTheory,
         toggleDashboardPractice,
         toggleHSCTheory,

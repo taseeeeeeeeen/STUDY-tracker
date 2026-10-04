@@ -47,6 +47,40 @@
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["challenge_id", "created_by", "duration", "selected_syllabus", "start_date", "participants"]
+    },
+    "WeeklySnapshot": {
+      "title": "WeeklySnapshot",
+      "description": "Weekly progress summary for comparison and leaderboard",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "weekKey": { "type": "string", "maxLength": 32 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "activeChallengeId": { "type": "string", "maxLength": 128 },
+        "subjects": { "type": "array" },
+        "topicsCompleted": { "type": "number" },
+        "totalPlanned": { "type": "number" },
+        "unitsCompleted": { "type": "number" },
+        "streakDays": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "weekKey", "displayName", "subjects", "topicsCompleted", "totalPlanned", "unitsCompleted", "streakDays"]
+    },
+    "PeerLink": {
+      "title": "PeerLink",
+      "description": "Pair connection document between two accountability study buddies",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 260 },
+        "uids": { "type": "array" },
+        "status": { "type": "string", "enum": ["requested", "active", "rejected"] },
+        "requestedBy": { "type": "string", "maxLength": 128 },
+        "requesterName": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "uids", "status", "requestedBy"]
     }
   },
   "firestore": {
@@ -58,9 +92,21 @@
       "schema": "Subject",
       "description": "Master syllabus subjects, chapters, and topics managed exclusively by admins"
     },
+    "/user_progress/{userId}": {
+      "schema": "User",
+      "description": "User topic progress, peer codes, and completion logs"
+    },
     "/challenges/{challengeId}": {
       "schema": "Challenge",
       "description": "Real-time cohort study challenges with participant progress synchronization"
+    },
+    "/weekly_snapshots/{snapshotId}": {
+      "schema": "WeeklySnapshot",
+      "description": "Weekly progress snapshots for all users, enabling peer comparison"
+    },
+    "/peer_links/{pairId}": {
+      "schema": "PeerLink",
+      "description": "1-on-1 peer links between accountability partners"
     }
   }
 }

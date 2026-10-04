@@ -1,11 +1,6 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default Deny Catch-all
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -55,6 +50,15 @@ service cloud.firestore {
         data.chapters is list && data.chapters.size() <= 100;
     }
 
+    function isLinkedPeer(userId) {
+      let pairA = request.auth.uid + '_' + userId;
+      let pairB = userId + '_' + request.auth.uid;
+      return (exists(/databases/$(database)/documents/peer_links/$(pairA)) &&
+              get(/databases/$(database)/documents/peer_links/$(pairA)).data.status == 'active') ||
+             (exists(/databases/$(database)/documents/peer_links/$(pairB)) &&
+              get(/databases/$(database)/documents/peer_links/$(pairB)).data.status == 'active');
+    }
+
     // User profiles & RBAC collection
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
@@ -79,9 +83,24 @@ service cloud.firestore {
 
     // User progress persistence
     match /user_progress/{userId} {
-      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin() || isLinkedPeer(userId));
+      allow list: if isSignedIn();
       allow create, update: if isValidId(userId) && isOwner(userId);
       allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // Peer links (1-on-1 accountability buddy matching)
+    match /peer_links/{pairId} {
+      allow get, list: if isSignedIn() && (request.auth.uid in existing().uids || isAdmin());
+      allow create: if isSignedIn() && (
+        incoming().requestedBy == request.auth.uid &&
+        request.auth.uid in incoming().uids
+      );
+      allow update: if isSignedIn() && (
+        request.auth.uid in existing().uids &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+      );
+      allow delete: if isAdmin() || (isSignedIn() && request.auth.uid in existing().uids);
     }
 
     // Challenges collection (Real-time cohort sprint coordination)
@@ -90,6 +109,13 @@ service cloud.firestore {
       allow create: if isValidId(challengeId) && isSignedIn() && incoming().created_by == request.auth.uid;
       allow update: if isValidId(challengeId) && isSignedIn();
       allow delete: if isValidId(challengeId) && (isAdmin() || (isSignedIn() && existing().created_by == request.auth.uid));
+    }
+    
+    // Weekly progress snapshots for comparison
+    match /weekly_snapshots/{snapshotId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn() && (incoming().uid == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
     }
 
     // Health check endpoint for connection verification

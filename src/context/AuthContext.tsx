@@ -54,7 +54,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           await setDoc(userDocRef, newUser);
         } catch (err) {
-          handleFirestoreError(err, OperationType.WRITE, `users/${fbUser.uid}`);
+          // If we fail to write because we are offline, it's non-fatal for the session
+          console.warn('Failed to create user record (offline?):', err);
         }
 
         return newUser;
@@ -71,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               lastLoginAt: nowIso,
             });
           } catch (err) {
-            handleFirestoreError(err, OperationType.UPDATE, `users/${fbUser.uid}`);
+            console.warn('Failed to elevate user to admin (offline?):', err);
           }
 
           return {
@@ -101,6 +102,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('offline') || message.includes('unavailable')) {
+        console.warn('Firestore is offline, using fallback user profile.');
+        return {
+          uid: fbUser.uid,
+          name: fbUser.displayName || 'Taseen Ahmed',
+          email: fbUser.email || '',
+          photoURL: fbUser.photoURL || '',
+          role: assignedRole,
+          createdAt: fbUser.metadata?.creationTime ? new Date(fbUser.metadata.creationTime).toISOString() : new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+        };
+      }
       handleFirestoreError(err, OperationType.GET, `users/${fbUser.uid}`);
     }
   };
