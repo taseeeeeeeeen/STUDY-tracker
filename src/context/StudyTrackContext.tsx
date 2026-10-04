@@ -21,8 +21,17 @@ import {
   subscribeChallenge,
   isChallengeActive,
   restartChallengeClock,
+  updateChallengeDayAllocation,
+  archiveChallenge,
+  deleteFirestoreChallenge,
 } from '../services/challengeService';
-import { dedupeSyllabusTopics } from '../utils/challengeLogic';
+import {
+  dedupeSyllabusTopics,
+  performMidnightRollover,
+  computeCurrentSprintDay,
+  flattenAllocationToTopics,
+} from '../utils/challengeLogic';
+import { getLocalMidnightIso } from '../utils/dateUtils';
 import {
   subscribeUserProgress,
   subscribeMemberProgress,
@@ -93,6 +102,8 @@ interface StudyTrackContextType {
   joinChallengeCode: (code: string) => Promise<boolean>;
   setActiveChallenge: (challenge: FirestoreChallenge) => void;
   resetActiveChallenge: () => Promise<void>;
+  archiveActiveChallenge: () => Promise<void>;
+  deleteActiveChallenge: () => Promise<void>;
   triggerToast: (msg: string) => void;
   toastMessage: string | null;
   clearToast: () => void;
@@ -297,7 +308,26 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         const rawSyllabus = challengeDoc.selected_syllabus || [];
         const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
 
-        const mappedTasks: Task[] = dedupedSyllabus.map((top, idx) => {
+        // Derive today's allocated topics from day_wise_allocation if present
+        const currentSprintDay = computeCurrentSprintDay(
+          challengeDoc.start_date,
+          challengeDoc.duration,
+          Date.now()
+        );
+        const dayKey = `Day ${currentSprintDay}`;
+        const hasDayAllocation = Boolean(
+          challengeDoc.day_wise_allocation &&
+          Object.keys(challengeDoc.day_wise_allocation).length > 0
+        );
+        const flattened = hasDayAllocation
+          ? flattenAllocationToTopics(challengeDoc.day_wise_allocation)
+          : null;
+
+        const targetTopics = flattened
+          ? (flattened[dayKey] || [])
+          : dedupedSyllabus;
+
+        const mappedTasks: Task[] = targetTopics.map((top: any, idx: number) => {
           const prog = userProgressRef.current[top.id] || { theory: false, practice: false };
 
           // Replace hardcoded substring guessing with exact/prefix matching
@@ -320,13 +350,15 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
             id: top.id || `task-${idx + 1}`,
             subject: sub,
             title: top.title,
-            description: top.subconcept || `${top.subject} core problem set and fundamentals`,
+            description: top.subconcept || `${top.subject || sub} core problem set and fundamentals`,
             durationMinutes: top.durationMinutes || 45,
             theoryCompleted: Boolean(prog.theory),
             practiceCompleted: Boolean(prog.practice),
             createdAt: challengeCreatedAt,
             isLocked: isExpired && !(prog.theory && prog.practice),
             lockReason: isExpired ? 'Locked: 24-hour study completion window expired' : undefined,
+            isCarriedOver: Boolean(top.isCarriedOver),
+            carriedOverFromDay: top.carriedOverFromDay,
           };
         });
 
@@ -417,6 +449,51 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       })
     );
   }, [currentTime]);
+
+  // Automatic midnight day-reset / rollover
+  const isRollingOverRef = useRef(false);
+
+  useEffect(() => {
+    if (
+      !user ||
+      !activeChallenge ||
+      !activeChallenge.day_wise_allocation ||
+      !activeChallenge.start_date
+    ) {
+      return;
+    }
+
+    if (isRollingOverRef.current) return;
+
+    const { updatedAllocation, hasChanges, carriedCount } = performMidnightRollover(
+      activeChallenge,
+      userProgressDoc,
+      currentTime,
+      user.uid
+    );
+
+    if (hasChanges) {
+      isRollingOverRef.current = true;
+      updateChallengeDayAllocation(
+        activeChallenge.challenge_id,
+        updatedAllocation,
+        activeChallenge.start_date
+      )
+        .then(() => {
+          if (carriedCount > 0) {
+            triggerToast(
+              `${carriedCount} unfinished topic${carriedCount > 1 ? 's' : ''} carried over to today.`
+            );
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to auto-save midnight rollover:', err);
+        })
+        .finally(() => {
+          isRollingOverRef.current = false;
+        });
+    }
+  }, [activeChallenge, userProgressDoc, currentTime, user]);
 
   // Instantly update Firestore document on Theory or Practice toggle
   const toggleDashboardTheory = async (taskId: string) => {
@@ -668,10 +745,42 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   const todayCompletionPercentage = totalUnits > 0 ? (completedUnits / totalUnits) * 100 : 0;
   const completedTopicsCount = tasks.filter((t) => t.theoryCompleted && t.practiceCompleted).length;
 
-  // Real Weekly stats computed from deduped challenge tasks
+  // Real Weekly stats computed from full sprint syllabus tasks
+  const allSprintTasks: Task[] = useMemo(() => {
+    if (!activeChallenge) return tasks;
+    const deduped = dedupeSyllabusTopics(activeChallenge.selected_syllabus || []);
+    if (deduped.length === 0) return tasks;
+    return deduped.map((top, idx) => {
+      const prog = userProgress[top.id] || { theory: false, practice: false };
+      const subjectStr = top.subject || 'Physics';
+      const sLower = subjectStr.toLowerCase().trim();
+      let sub = subjectStr;
+      if (sLower.startsWith('phys') || sLower.includes('ফিজিক্স')) sub = 'Physics';
+      else if (sLower.startsWith('chem') || sLower.includes('কেমিস্ট্রি')) sub = 'Chemistry';
+      else if (sLower.startsWith('math') || sLower.includes('গণিত')) sub = 'Math';
+      else if (sLower.startsWith('bio') || sLower.includes('জীব')) sub = 'Biology';
+      else if (sLower.startsWith('bang') || sLower.includes('বাংলা')) sub = 'Bangla';
+      else if (sLower.startsWith('eng') || sLower.includes('ইংরেজি')) sub = 'English';
+      else if (sLower.startsWith('ict') || sLower.includes('তথ্য')) sub = 'ICT';
+
+      return {
+        id: top.id || `sprint-${idx + 1}`,
+        subject: sub,
+        title: top.title,
+        description: top.subconcept || `${top.subject} core problem set`,
+        durationMinutes: top.durationMinutes || 45,
+        theoryCompleted: Boolean(prog.theory),
+        practiceCompleted: Boolean(prog.practice),
+        createdAt: new Date(activeChallenge.start_date).getTime() || Date.now(),
+        isLocked: false,
+      };
+    });
+  }, [activeChallenge, userProgress, tasks]);
+
+  // Real Weekly stats computed from full sprint challenge tasks
   const weeklyStats: SubjectWeeklyStat[] = useMemo(() => {
-    return computeSubjectWeeklyStats(tasks);
-  }, [tasks]);
+    return computeSubjectWeeklyStats(allSprintTasks.length > 0 ? allSprintTasks : tasks);
+  }, [allSprintTasks, tasks]);
 
   // Real Streak calculated from real completion events
   const streakDays = useMemo(() => {
@@ -923,7 +1032,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       const topicIds = deduped.map((t) => t.id);
 
       await resetTopicsProgress(user.uid, topicIds);
-      await restartChallengeClock(activeChallenge.challenge_id, new Date().toISOString());
+      await restartChallengeClock(activeChallenge.challenge_id, getLocalMidnightIso(new Date()));
 
       triggerToast('Challenge reset. Day 1 starts now.');
     } catch (err) {
@@ -931,6 +1040,40 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       triggerToast('Failed to reset challenge. Please try again.');
     } finally {
       resettingRef.current = false;
+    }
+  };
+
+  // Archive active personal challenge
+  const archiveActiveChallenge = async () => {
+    if (!user || !activeChallenge) return;
+    try {
+      await archiveChallenge(activeChallenge.challenge_id);
+      await updateActiveChallengeId(user.uid, null);
+      setActiveChallengeId(null);
+      setActiveChallengeState(null);
+      setTasks([]);
+      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      triggerToast('Sprint challenge archived.');
+    } catch (err) {
+      console.error('Failed to archive challenge:', err);
+      triggerToast('Failed to archive challenge. Please try again.');
+    }
+  };
+
+  // Delete active personal challenge
+  const deleteActiveChallenge = async () => {
+    if (!user || !activeChallenge) return;
+    try {
+      await deleteFirestoreChallenge(activeChallenge.challenge_id);
+      await updateActiveChallengeId(user.uid, null);
+      setActiveChallengeId(null);
+      setActiveChallengeState(null);
+      setTasks([]);
+      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      triggerToast('Sprint challenge deleted.');
+    } catch (err) {
+      console.error('Failed to delete challenge:', err);
+      triggerToast('Failed to delete challenge. Please try again.');
     }
   };
 
@@ -966,6 +1109,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         joinChallengeCode,
         setActiveChallenge,
         resetActiveChallenge,
+        archiveActiveChallenge,
+        deleteActiveChallenge,
         triggerToast,
         toastMessage,
         clearToast,

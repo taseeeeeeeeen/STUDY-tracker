@@ -5,6 +5,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   onSnapshot,
@@ -292,10 +293,11 @@ export function getChallengeEndDate(challenge: { start_date: string; duration: n
 }
 
 export function isChallengeActive(
-  challenge: { start_date: string; duration: number } | null,
+  challenge: { start_date: string; duration: number; status?: string } | null,
   nowMs?: number
 ): boolean {
   if (!challenge) return false;
+  if (challenge.status === 'archived') return false;
   if (!challenge.start_date) return false;
   if (challenge.duration <= 0) return false;
 
@@ -314,6 +316,60 @@ export function isChallengeActive(
 
   const current = nowMs !== undefined ? nowMs : Date.now();
   return current >= startObj.getTime() && current <= endDate.getTime();
+}
+
+/**
+ * Finds the currently active personal challenge created by the user, if one exists.
+ */
+export async function findActivePersonalChallenge(
+  uid: string
+): Promise<FirestoreChallenge | null> {
+  if (!auth.currentUser || !uid) return null;
+  try {
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('created_by', '==', uid)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+
+    // Filter in-memory for active status to avoid composite index requirements
+    const active = snap.docs
+      .map((d) => d.data() as FirestoreChallenge)
+      .filter((c) => c.status !== 'archived' && isChallengeActive(c));
+
+    return active.length > 0 ? active[0] : null;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, COLLECTION_NAME);
+  }
+}
+
+/**
+ * Retires / archives an existing challenge so the user can start a new sprint.
+ */
+export async function archiveChallenge(challengeId: string): Promise<void> {
+  const challengeRef = doc(db, COLLECTION_NAME, challengeId);
+  try {
+    await updateDoc(challengeRef, {
+      status: 'archived',
+      archivedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
+  }
+}
+
+/**
+ * Deletes a challenge document created by the user.
+ */
+export async function deleteFirestoreChallenge(challengeId: string): Promise<void> {
+  const challengeRef = doc(db, COLLECTION_NAME, challengeId);
+  try {
+    await deleteDoc(challengeRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${COLLECTION_NAME}/${challengeId}`);
+  }
 }
 
 

@@ -27,13 +27,17 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
     id: `column-${column.dayNumber}`,
     disabled: isBoardLocked,
     data: {
+      column,
       dayNumber: column.dayNumber,
       isPast,
     },
   });
 
-  // Calculate total workload for this day
+  // Calculate total workload for this day across all chapter cards
   const totalMinutes = cards.reduce((sum, c) => sum + c.durationMinutes, 0);
+  const totalChapters = cards.length;
+  const totalTopics = cards.reduce((sum, c) => sum + (c.topics?.length || 1), 0);
+
   const hours = Math.floor(totalMinutes / 60);
   const mins = totalMinutes % 60;
   const timeFormatted = `${hours > 0 ? `${hours}h ` : ''}${mins}m`;
@@ -77,7 +81,9 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
         </div>
 
         <div className="flex items-center justify-between text-[#404942] text-[11px] font-mono">
-          <span>{cards.length} {cards.length === 1 ? 'topic' : 'topics'}</span>
+          <span>
+            {totalChapters} {totalChapters === 1 ? 'ch' : 'chs'} ({totalTopics} {totalTopics === 1 ? 'topic' : 'topics'})
+          </span>
           <span>{timeFormatted}</span>
         </div>
 
@@ -133,7 +139,7 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
           <div className="p-3 rounded-xl border border-[#ba1a1a] bg-[#ffdad6] text-[#93000a] text-center text-xs font-semibold flex flex-col items-center gap-1 animate-pulse">
             <span className="material-symbols-outlined text-base">block</span>
             <span>Day is Locked</span>
-            <span className="text-[10px] font-normal">Cannot schedule topics for past days</span>
+            <span className="text-[10px] font-normal">Cannot schedule chapters for past days</span>
           </div>
         )}
 
@@ -142,7 +148,7 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
             <span className="material-symbols-outlined text-base animate-bounce">
               arrow_downward
             </span>
-            <span>Drop topic here</span>
+            <span>Drop chapter here</span>
           </div>
         )}
 
@@ -153,7 +159,7 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
               {isPast ? 'history' : 'add_circle_outline'}
             </span>
             <span className="text-[11px] font-medium">
-              {isPast ? 'No past topics' : 'Drag topic here'}
+              {isPast ? 'No past chapters' : 'Drag chapter here'}
             </span>
           </div>
         )}

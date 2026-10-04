@@ -12,6 +12,8 @@ export interface Task {
   isLocked: boolean;
   lockReason?: string;
   isPriority?: boolean;
+  isCarriedOver?: boolean;
+  carriedOverFromDay?: number;
 }
 
 export interface SubjectWeeklyStat {

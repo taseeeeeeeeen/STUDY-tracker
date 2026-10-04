@@ -20,20 +20,40 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
   cards,
   onConfirmShift,
 }) => {
-  // REQUIREMENT 3: Strictly populate with Future Days (Days > currentDay)
-  const futureDays = columns.filter((col) => col.dayNumber > currentDay);
+  // Allow shifting to ANY active day >= currentDay, excluding the chapter's current day
+  const selectableDays = columns.filter(
+    (col) => col.dayNumber >= currentDay && col.dayNumber !== card?.dayNumber
+  );
 
   const [selectedDay, setSelectedDay] = useState<number>(
-    futureDays.length > 0 ? futureDays[0].dayNumber : currentDay + 1
+    selectableDays.length > 0 ? selectableDays[0].dayNumber : currentDay
   );
   const [autoBalance, setAutoBalance] = useState(true);
+  const [overrideCapacity, setOverrideCapacity] = useState(false);
+
+  // Calculate target day capacity and projected workload
+  const targetCards = cards.filter((c) => c.dayNumber === selectedDay && c.id !== card?.id);
+  const targetCurrentMins = targetCards.reduce((sum, c) => sum + c.durationMinutes, 0);
+  const targetCol = columns.find((c) => c.dayNumber === selectedDay);
+  const targetCapacity = targetCol?.capacityMinutes || 150;
+  const projectedTotal = targetCurrentMins + (card?.durationMinutes || 0);
+  const isOverCapacity = projectedTotal > targetCapacity;
+
+  // Reset override whenever target day changes
+  useEffect(() => {
+    setOverrideCapacity(false);
+  }, [selectedDay]);
 
   // Update selected day whenever the modal opens or card changes
   useEffect(() => {
-    if (futureDays.length > 0) {
-      // Default to next future day or the first future day
-      const nextFuture = futureDays.find((d) => d.dayNumber > (card?.dayNumber || 0));
-      setSelectedDay(nextFuture ? nextFuture.dayNumber : futureDays[0].dayNumber);
+    if (selectableDays.length > 0) {
+      // If card is on a future day, default to today or next
+      const defaultDay =
+        card && card.dayNumber > currentDay
+          ? currentDay
+          : selectableDays.find((d) => d.dayNumber > (card?.dayNumber || 0))?.dayNumber ||
+            selectableDays[0].dayNumber;
+      setSelectedDay(defaultDay);
     }
   }, [card, currentDay, isOpen]);
 
@@ -43,6 +63,8 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
     onConfirmShift(card.id, Number(selectedDay));
     onClose();
   };
+
+  const topicCount = card.topics?.length || 1;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in">
@@ -55,27 +77,29 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
             </div>
             <div>
               <h3 className="text-base text-[#0b1c30] font-bold">
-                Shift Topic to Another Day
+                Shift Chapter to Another Day
               </h3>
               <p className="text-xs text-[#404942]">
-                Rebalance module allocation (Past days are locked)
+                Move all {topicCount} topics of this chapter in one action
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-[#707971] hover:text-[#0b1c30] hover:bg-[#eff4ff] transition-colors"
+            className="p-1 rounded-lg text-[#707971] hover:text-[#0b1c30] hover:bg-[#eff4ff] transition-colors cursor-pointer"
           >
             <span className="material-symbols-outlined text-xl">close</span>
           </button>
         </div>
 
-        {/* Selected Module Brief Card */}
+        {/* Selected Chapter Brief Card */}
         <div className="p-3.5 rounded-xl bg-[#eff4ff] border border-[#c0c9c0]/30 flex items-center justify-between">
           <div className="flex flex-col">
-            <span className="text-xs font-bold text-[#0b1c30]">{card.title}</span>
+            <span className="text-xs font-bold text-[#0b1c30]">
+              {card.chapterName || card.title}
+            </span>
             <span className="text-[11px] text-[#404942]">
-              {card.subject} • Currently scheduled on Day {card.dayNumber}
+              {card.subject} • {topicCount} {topicCount === 1 ? 'topic' : 'topics'} • Scheduled on Day {card.dayNumber}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -83,7 +107,7 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
               {card.durationMinutes} min
             </span>
             <span className="px-2 py-0.5 rounded bg-[#6ffbbe]/30 text-[#003820] text-[10px] font-bold">
-              {card.tag}
+              Chapter
             </span>
           </div>
         </div>
@@ -92,15 +116,15 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
         <div className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-[#0b1c30] flex items-center justify-between">
-              <span>Select Target Day</span>
+              <span>Select Destination Day</span>
               <span className="text-[11px] text-[#006c49] font-normal">
-                Strictly Future Days (Days &gt; {currentDay})
+                Active Days (Today &amp; Upcoming)
               </span>
             </label>
 
-            {futureDays.length === 0 ? (
+            {selectableDays.length === 0 ? (
               <div className="p-3 bg-[#ffdad6]/60 border border-[#ba1a1a]/30 rounded-xl text-[#93000a] text-xs">
-                No future days available for shifting in this sprint.
+                No alternative days available for shifting in this sprint.
               </div>
             ) : (
               <div className="relative">
@@ -109,12 +133,14 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
                   onChange={(e) => setSelectedDay(Number(e.target.value))}
                   className="w-full bg-white border border-[#c0c9c0] rounded-xl p-3 text-xs text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820] shadow-xs cursor-pointer appearance-none pr-8"
                 >
-                  {futureDays.map((col) => {
+                  {selectableDays.map((col) => {
+                    const isTodayCol = col.dayNumber === currentDay;
                     const dayCards = cards.filter((c) => c.dayNumber === col.dayNumber);
                     const dayMins = dayCards.reduce((s, c) => s + c.durationMinutes, 0);
+                    const dayTopics = dayCards.reduce((s, c) => s + (c.topics?.length || 1), 0);
                     return (
                       <option key={col.dayNumber} value={col.dayNumber}>
-                        {col.dateLabel} ({col.dayName}) — {dayCards.length} topics queued ({dayMins}m load)
+                        {col.dateLabel} ({col.dayName}){isTodayCol ? ' — TODAY' : ''} — {dayCards.length} chs, {dayTopics} topics ({dayMins}m load)
                       </option>
                     );
                   })}
@@ -126,13 +152,43 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
             )}
           </div>
 
-          {/* Scientific Validation Note */}
+          {/* Capacity Exceeded Warning */}
+          {isOverCapacity && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs flex flex-col gap-2">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined text-base text-amber-700 shrink-0">
+                  warning
+                </span>
+                <div className="space-y-0.5">
+                  <span className="font-bold text-amber-900">
+                    Daily Capacity Warning
+                  </span>
+                  <p className="text-[11px] text-amber-800">
+                    Day {selectedDay} already has {targetCurrentMins} min; adding this chapter makes {projectedTotal} min (target limit: {targetCapacity} min).
+                  </p>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 p-2 rounded-lg bg-amber-100/70 border border-amber-300/80 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={overrideCapacity}
+                  onChange={(e) => setOverrideCapacity(e.target.checked)}
+                  className="rounded border-amber-400 text-[#003820] focus:ring-[#003820]"
+                />
+                <span className="font-semibold text-[11px] text-amber-950">
+                  I understand this exceeds capacity; override deliberately
+                </span>
+              </label>
+            </div>
+          )}
+
+          {/* Validation Note */}
           <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
             <span className="material-symbols-outlined text-base text-amber-700 shrink-0">
               verified_user
             </span>
             <span className="text-[11px]">
-              <strong>Time-Travel Prevention Active:</strong> Days 1 to {currentDay} (past/current) are omitted to protect academic integrity.
+              <strong>Academic Integrity Rules:</strong> You can shift chapters freely between Today and future days until midnight. Past days are locked to maintain reliable records.
             </span>
           </div>
 
@@ -146,7 +202,7 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
             />
             <div className="flex flex-col">
               <span className="font-semibold text-[#0b1c30]">
-                Preserve 2.5-hour maximum daily ceiling
+                Preserve daily workload balance
               </span>
               <span className="text-[#404942] text-[11px]">
                 Checks available capacity in Day {selectedDay} before confirming.
@@ -160,18 +216,18 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-[#404942] hover:bg-[#eff4ff] text-xs font-semibold transition-colors"
+            className="px-4 py-2 rounded-xl text-[#404942] hover:bg-[#eff4ff] text-xs font-semibold transition-colors cursor-pointer"
           >
             Cancel
           </button>
           <button
             type="button"
-            disabled={futureDays.length === 0}
+            disabled={selectableDays.length === 0 || (isOverCapacity && !overrideCapacity)}
             onClick={handleConfirm}
             className="px-5 py-2 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className="material-symbols-outlined text-sm">check</span>
-            Confirm Shift
+            {isOverCapacity ? 'Override & Confirm Shift' : 'Confirm Shift'}
           </button>
         </div>
       </div>

@@ -11,6 +11,8 @@ interface TopOverviewCardsProps {
   backlog: WeeklyBacklog;
   sprint: ActiveSprint;
   onReset?: () => void;
+  onArchive?: () => void;
+  onDelete?: () => void;
 }
 
 export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
@@ -23,13 +25,23 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
   backlog,
   sprint,
   onReset,
+  onArchive,
+  onDelete,
 }) => {
   const [confirmReset, setConfirmReset] = useState(false);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const archiveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     return () => {
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      if (archiveTimerRef.current) clearTimeout(archiveTimerRef.current);
+      if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
     };
   }, []);
 
@@ -47,6 +59,40 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
       setConfirmReset(false);
       onReset();
+    }
+  };
+
+  const handleArchiveClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onArchive) return;
+
+    if (!confirmArchive) {
+      setConfirmArchive(true);
+      if (archiveTimerRef.current) clearTimeout(archiveTimerRef.current);
+      archiveTimerRef.current = setTimeout(() => {
+        setConfirmArchive(false);
+      }, 4000);
+    } else {
+      if (archiveTimerRef.current) clearTimeout(archiveTimerRef.current);
+      setConfirmArchive(false);
+      onArchive();
+    }
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onDelete) return;
+
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+      deleteTimerRef.current = setTimeout(() => {
+        setConfirmDelete(false);
+      }, 4000);
+    } else {
+      if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+      setConfirmDelete(false);
+      onDelete();
     }
   };
   // Total remaining topics across all subjects
@@ -196,17 +242,44 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
               <span className="material-symbols-outlined text-sm">workspace_premium</span>
               <span>{sprint.rewardBadge}</span>
             </div>
-            {onReset && (
-              <button
-                type="button"
-                onClick={handleResetClick}
-                className={`text-xs font-semibold cursor-pointer transition-colors ${
-                  confirmReset ? 'text-amber-700 font-bold' : 'text-[#707971] hover:text-[#0b1c30]'
-                }`}
-              >
-                {confirmReset ? 'Confirm reset?' : 'Reset'}
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {onReset && (
+                <button
+                  type="button"
+                  onClick={handleResetClick}
+                  className={`text-xs font-semibold cursor-pointer transition-colors ${
+                    confirmReset ? 'text-amber-700 font-bold' : 'text-[#707971] hover:text-[#0b1c30]'
+                  }`}
+                  title="Reset challenge topic progress and restart Day 1"
+                >
+                  {confirmReset ? 'Confirm reset?' : 'Reset'}
+                </button>
+              )}
+              {onArchive && (
+                <button
+                  type="button"
+                  onClick={handleArchiveClick}
+                  className={`text-xs font-semibold cursor-pointer transition-colors ${
+                    confirmArchive ? 'text-red-700 font-bold' : 'text-[#707971] hover:text-red-600'
+                  }`}
+                  title="Archive this sprint so you can start a new one"
+                >
+                  {confirmArchive ? 'Confirm archive?' : 'Archive'}
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={handleDeleteClick}
+                  className={`text-xs font-semibold cursor-pointer transition-colors ${
+                    confirmDelete ? 'text-red-700 font-bold' : 'text-[#707971] hover:text-red-600'
+                  }`}
+                  title="Delete this sprint permanently"
+                >
+                  {confirmDelete ? 'Confirm delete?' : 'Delete'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

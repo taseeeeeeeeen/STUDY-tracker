@@ -3,6 +3,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   DragStartEvent,
@@ -11,13 +12,29 @@ import {
 import {
   SprintDuration,
   BoardCard,
+  BoardTopic,
   SyllabusItem,
   DayColumnData,
 } from '../../types/wizard';
 import { MasterSubject } from '../../types/syllabus';
 import { subscribeMasterSyllabus, seedDefaultSyllabus } from '../../services/syllabusService';
-import { createFirestoreChallenge, updateChallengeDayAllocation } from '../../services/challengeService';
+import {
+  createFirestoreChallenge,
+  updateChallengeDayAllocation,
+  findActivePersonalChallenge,
+  archiveChallenge,
+  deleteFirestoreChallenge,
+} from '../../services/challengeService';
+import { FirestoreChallenge } from '../../types/challenge';
 import { dedupeSyllabusTopics } from '../../utils/challengeLogic';
+import {
+  getLocalDateString,
+  parseLocalDate,
+  formatSprintEndDate,
+  getLocalSprintEndDateIso,
+  getLocalMidnightIso,
+  computeCurrentSprintDay,
+} from '../../utils/dateUtils';
 import { useAuth } from '../../context/AuthContext';
 import { useStudyTrack } from '../../context/StudyTrackContext';
 import { DroppableDayColumn } from './DroppableDayColumn';
@@ -34,7 +51,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 }) => {
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
-  const { setActiveChallenge, currentTime } = useStudyTrack();
+  const { activeChallenge, setActiveChallenge, currentTime } = useStudyTrack();
 
   const handleBack = () => {
     if (onBackToDashboard) onBackToDashboard();
@@ -58,16 +75,16 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   // STEP 3: Planning Board & Scientific Validation (Time Travel Prevention)
   const [boardCards, setBoardCards] = useState<BoardCard[]>([]);
 
-  const todayDateString = new Date().toISOString().split('T')[0];
+  // Strict local date string for HTML min attribute & calendar boundaries
+  const todayDateString = getLocalDateString();
 
-  // Dynamic Day Columns based on duration and startDate (Task 3.5)
+  // Dynamic Day Columns based on duration and startDate in user's local timezone
   const columns: DayColumnData[] = useMemo(() => {
     const numDays = duration || 7;
-    const baseDate = startDate ? new Date(startDate + 'T00:00:00') : new Date();
+    const baseDate = startDate ? parseLocalDate(startDate) : new Date();
 
     return Array.from({ length: numDays }, (_, i) => {
-      const dayDate = new Date(baseDate);
-      dayDate.setDate(baseDate.getDate() + i);
+      const dayDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + i);
       const dayName = dayDate.toLocaleDateString('en-US', { weekday: 'short' });
       const monthStr = dayDate.toLocaleDateString('en-US', { month: 'short' });
       const dayNum = dayDate.getDate();
@@ -80,26 +97,16 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     });
   }, [startDate, duration]);
 
-  // Computed End Date (Task 3.2)
+  // Computed End Date formatted in local timezone
   const formattedEndDate = useMemo(() => {
     if (!startDate || !duration) return null;
-    const start = new Date(startDate + 'T00:00:00');
-    const end = new Date(start);
-    end.setDate(start.getDate() + (duration - 1));
-    return end.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    return formatSprintEndDate(startDate, duration);
   }, [startDate, duration]);
 
+  // Computed End Date ISO with local offset
   const computedEndDateIso = useMemo(() => {
     if (!startDate || !duration) return null;
-    const start = new Date(startDate + 'T00:00:00');
-    const end = new Date(start);
-    end.setDate(start.getDate() + (duration - 1));
-    return end.toISOString();
+    return getLocalSprintEndDateIso(startDate, duration);
   }, [startDate, duration]);
 
   // Drag and Drop active item
@@ -116,16 +123,26 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   const [challengePayload, setChallengePayload] = useState<Record<string, unknown> | null>(null);
   const [isStartModalOpen, setIsStartModalOpen] = useState(false);
 
+  // Capacity Warning Modal state
+  const [capacityWarning, setCapacityWarning] = useState<{
+    isOpen: boolean;
+    card: BoardCard;
+    targetDay: number;
+    currentMinutes: number;
+    newTotal: number;
+    capacity: number;
+    onConfirm: () => void;
+  } | null>(null);
+
+  // Active Challenge Conflict Modal state (enforcing 1 active personal challenge)
+  const [activeChallengeConflict, setActiveChallengeConflict] = useState<FirestoreChallenge | null>(null);
+
   const isBoardLocked = !isChallengeSaved;
 
-  // Dynamic Current Day derivation based on real-time clock and start date (Task 3.5)
+  // Dynamic Current Day derivation based on local midnight boundaries
   const currentDay = useMemo(() => {
     if (!isChallengeSaved || !startDate) return 1;
-    const now = currentTime || Date.now();
-    const startMs = new Date(startDate + 'T00:00:00').getTime();
-    const dayDiff = Math.floor((now - startMs) / 86400000) + 1;
-    const maxDays = duration || 7;
-    return Math.min(maxDays, Math.max(1, dayDiff));
+    return computeCurrentSprintDay(startDate, duration || 7, currentTime || Date.now());
   }, [isChallengeSaved, startDate, currentTime, duration]);
 
   // Toast alert
@@ -136,10 +153,17 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Enhanced sensors for touch & pointer with jitter suppression
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
         distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 150,
+        tolerance: 5,
       },
     })
   );
@@ -192,7 +216,15 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         }) as SyllabusItem[];
 
         setSyllabus((prev) => {
-          if (prev.length === 0) return dedupedItems;
+          if (prev.length === 0) {
+            const activeIds = new Set(
+              (activeChallenge?.selected_syllabus || []).map((s: { id: string }) => s.id)
+            );
+            return dedupedItems.map((item) => ({
+              ...item,
+              checked: activeIds.has(item.id),
+            }));
+          }
           // Preserve checked state if syllabus was already loaded
           const checkedMap = new Map(prev.map((p) => [p.id, p.checked]));
           return dedupedItems.map((item) => ({
@@ -208,34 +240,184 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     );
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, activeChallenge]);
 
-  // Update DnD board cards whenever selected syllabus changes (Task 3.5: no demo randomization)
+  // Track order in which chapters were selected
+  const chapterOrderRef = useRef<string[]>([]);
+  const hasHydratedRef = useRef(false);
+
+  // Helper to load an existing active challenge into the wizard
+  const loadChallengeIntoWizard = (challengeDoc: FirestoreChallenge) => {
+    setChallengeName(challengeDoc.challenge_name || '');
+    if (challengeDoc.duration) {
+      setDuration(challengeDoc.duration as SprintDuration);
+    }
+    if (challengeDoc.start_date) {
+      setStartDate(getLocalDateString(parseLocalDate(challengeDoc.start_date)));
+    }
+    setSavedChallengeId(challengeDoc.challenge_id);
+    setIsChallengeSaved(true);
+    setChallengePayload(challengeDoc as any);
+
+    if (challengeDoc.day_wise_allocation) {
+      const restored: BoardCard[] = [];
+      Object.entries(challengeDoc.day_wise_allocation).forEach(([dayKey, dayCards]) => {
+        const match = dayKey.match(/Day\s+(\d+)/i);
+        const dayNum = match ? parseInt(match[1], 10) : 1;
+        if (Array.isArray(dayCards)) {
+          dayCards.forEach((c: any) => {
+            const cardId = c.id || `chapter-${c.chapterId || Math.random().toString(36).substring(2, 6)}`;
+            restored.push({
+              ...c,
+              id: cardId,
+              dayNumber: dayNum,
+              topics: Array.isArray(c.topics)
+                ? c.topics.map((t: any) => ({ ...t, dayNumber: dayNum }))
+                : undefined,
+            });
+          });
+        }
+      });
+      if (restored.length > 0) {
+        setBoardCards(restored);
+      }
+    }
+
+    if (challengeDoc.selected_syllabus && challengeDoc.selected_syllabus.length > 0) {
+      const selectedIds = new Set(challengeDoc.selected_syllabus.map((s) => s.id));
+      setSyllabus((prev) =>
+        prev.map((item) => ({
+          ...item,
+          checked: selectedIds.has(item.id),
+        }))
+      );
+    }
+  };
+
+  // RESUME AN EXISTING CHALLENGE: On reload or mount, load active challenge into wizard state
+  useEffect(() => {
+    if (!user) return;
+    if (hasHydratedRef.current) return;
+
+    const resumeActiveChallenge = async () => {
+      let challengeToResume = activeChallenge;
+      if (!challengeToResume) {
+        challengeToResume = await findActivePersonalChallenge(user.uid);
+      }
+      if (challengeToResume && challengeToResume.status !== 'archived') {
+        hasHydratedRef.current = true;
+        loadChallengeIntoWizard(challengeToResume);
+      }
+    };
+
+    resumeActiveChallenge();
+  }, [user, activeChallenge]);
+
+  // Update DnD board cards whenever selected syllabus changes: chapter-level grouping
   useEffect(() => {
     const selected = syllabus.filter((s) => s.checked);
     if (selected.length === 0) {
-      setBoardCards([]);
+      if (!isChallengeSaved) {
+        setBoardCards([]);
+        chapterOrderRef.current = [];
+      }
       return;
     }
 
-    // Distribute cards across day columns
+    // Group selected topics by chapterId
+    const groupsMap = new Map<
+      string,
+      {
+        chapterId: string;
+        chapterName: string;
+        subject: string;
+        topics: SyllabusItem[];
+      }
+    >();
+
+    selected.forEach((item) => {
+      const chId = item.chapterId || item.chapterName || item.subject;
+      if (!groupsMap.has(chId)) {
+        groupsMap.set(chId, {
+          chapterId: chId,
+          chapterName: item.chapterName || item.title,
+          subject: item.subject,
+          topics: [],
+        });
+      }
+      groupsMap.get(chId)!.topics.push(item);
+    });
+
+    // Maintain stable order of chapters as selected
+    const currentChapterIds = Array.from(groupsMap.keys());
+    const updatedOrder = chapterOrderRef.current.filter((id) => groupsMap.has(id));
+    currentChapterIds.forEach((id) => {
+      if (!updatedOrder.includes(id)) {
+        updatedOrder.push(id);
+      }
+    });
+    chapterOrderRef.current = updatedOrder;
+
     const numCols = columns.length || 7;
-    const newBoardCards: BoardCard[] = selected.map((item, idx) => {
-      const assignedDay = (idx % numCols) + 1;
+    const firstNonPastDay = Math.min(numCols, Math.max(1, currentDay));
+    const availableDaysCount = Math.max(1, numCols - firstNonPastDay + 1);
+
+    // Existing cards map by chapterId or id to preserve day assignments
+    const existingCardsMap = new Map<string, BoardCard>();
+    boardCards.forEach((c) => {
+      if (c.chapterId) existingCardsMap.set(c.chapterId, c);
+      if (c.id) {
+        existingCardsMap.set(c.id, c);
+        existingCardsMap.set(c.id.replace(/^chapter-/, ''), c);
+      }
+      if (c.title) existingCardsMap.set(c.title, c);
+    });
+
+    const newBoardCards: BoardCard[] = updatedOrder.map((chId, orderIdx) => {
+      const group = groupsMap.get(chId)!;
+      const existing = existingCardsMap.get(chId) || existingCardsMap.get(group.chapterName);
+
+      // Preserve existing day assignment if present, otherwise assign to firstNonPastDay + offset
+      const assignedDay =
+        existing && existing.dayNumber >= 1
+          ? existing.dayNumber
+          : firstNonPastDay + (orderIdx % availableDaysCount);
+
+      const totalDuration = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
+
+      const boardTopics: BoardTopic[] = group.topics.map((t) => {
+        const existingTopic = existing?.topics?.find((top) => top.id === t.id);
+        return {
+          id: t.id,
+          title: t.title,
+          subconcept: t.subconcept,
+          durationMinutes: t.durationMinutes || 45,
+          tag: t.tag || 'Core Concept',
+          subject: t.subject || group.subject,
+          chapterId: group.chapterId,
+          chapterName: group.chapterName,
+          isCarriedOver: existingTopic?.isCarriedOver || false,
+          carriedOverFromDay: existingTopic?.carriedOverFromDay,
+        };
+      });
 
       return {
-        id: `card-${item.id}`,
-        subject: item.subject,
-        title: item.title,
-        durationMinutes: item.durationMinutes,
-        tag: item.tag || 'Core Concept',
+        id: `chapter-${group.chapterId}`,
+        chapterId: group.chapterId,
+        chapterName: group.chapterName,
+        subject: group.subject,
+        title: group.chapterName,
+        durationMinutes: totalDuration,
+        tag: `${group.topics.length} ${group.topics.length === 1 ? 'topic' : 'topics'}`,
         dayNumber: assignedDay,
-        isFinished: false,
+        isCarriedOver: Boolean(existing?.isCarriedOver || boardTopics.some((t) => t.isCarriedOver)),
+        carriedOverFromDay: existing?.carriedOverFromDay,
+        topics: boardTopics,
       };
     });
 
     setBoardCards(newBoardCards);
-  }, [syllabus, columns.length]);
+  }, [syllabus, columns.length, currentDay, isChallengeSaved]);
 
   // Seed handler if admin notices empty syllabus
   const handleSeedSyllabus = async () => {
@@ -250,7 +432,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     }
   };
 
-  // Instant DB persistence helper for Drag & Drop allocation (Task 3.4)
+  // Instant DB persistence helper for Drag & Drop allocation in local timezone
   const persistAllocation = async (updatedCards: BoardCard[]) => {
     if (!isChallengeSaved || !savedChallengeId || !startDate) return;
     const dayWiseAllocation: Record<string, BoardCard[]> = {};
@@ -263,7 +445,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       await updateChallengeDayAllocation(
         savedChallengeId,
         dayWiseAllocation,
-        new Date(startDate + 'T00:00:00').toISOString()
+        getLocalMidnightIso(startDate)
       );
     } catch (err) {
       console.error('Failed to auto-save schedule changes to database:', err);
@@ -300,34 +482,69 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     // VALIDATION 1: Prevent dropping ANY card into a past column
     if (targetDay < currentDay) {
       showToast(
-        `Day ${targetDay} is in the past, so you cannot schedule topics there.`,
+        `Academic records for Day ${targetDay} are sealed. You can only schedule for Day ${currentDay} (Today) or upcoming days.`,
         'error'
       );
       return;
     }
 
-    // VALIDATION 2: Allow dragging an unfinished card from past into future
-    if (originalDay < currentDay) {
-      showToast(
-        `Moved "${draggedCard.title}" from Day ${originalDay} to Day ${targetDay}.`,
-        'success'
-      );
-    } else {
-      showToast(
-        `Moved "${draggedCard.title}" to Day ${targetDay}.`,
-        'info'
-      );
+    const targetCol = columns.find((c) => c.dayNumber === targetDay);
+    const capacity = targetCol?.capacityMinutes || 150;
+    const currentMinutes = boardCards
+      .filter((c) => c.dayNumber === targetDay && c.id !== draggedCard.id)
+      .reduce((sum, c) => sum + c.durationMinutes, 0);
+    const newTotal = currentMinutes + draggedCard.durationMinutes;
+
+    const executeDrop = () => {
+      // VALIDATION 2: Allow dragging an unfinished card from past into future
+      if (originalDay < currentDay) {
+        showToast(
+          `Moved "${draggedCard.chapterName || draggedCard.title}" from Day ${originalDay} to Day ${targetDay}.`,
+          'success'
+        );
+      } else {
+        showToast(
+          `Moved "${draggedCard.chapterName || draggedCard.title}" to Day ${targetDay}.`,
+          'info'
+        );
+      }
+
+      const nextCards = boardCards.map((c) => {
+        if (c.id === draggedCard.id) {
+          return {
+            ...c,
+            dayNumber: targetDay,
+            topics: (c.topics || []).map((t) => ({ ...t, dayNumber: targetDay })),
+          };
+        }
+        return c;
+      });
+      setBoardCards(nextCards);
+
+      // Auto-save instantly to Firestore if saved
+      if (isChallengeSaved && savedChallengeId) {
+        persistAllocation(nextCards);
+      }
+    };
+
+    // Capacity enforcement with deliberate override
+    if (newTotal > capacity) {
+      setCapacityWarning({
+        isOpen: true,
+        card: draggedCard,
+        targetDay,
+        currentMinutes,
+        newTotal,
+        capacity,
+        onConfirm: () => {
+          executeDrop();
+          setCapacityWarning(null);
+        },
+      });
+      return;
     }
 
-    const nextCards = boardCards.map((c) =>
-      c.id === draggedCard.id ? { ...c, dayNumber: targetDay } : c
-    );
-    setBoardCards(nextCards);
-
-    // Auto-save instantly to Firestore if saved (Task 3.4)
-    if (isChallengeSaved && savedChallengeId) {
-      persistAllocation(nextCards);
-    }
+    executeDrop();
   };
 
   // Topic Shift Modal Logic
@@ -340,36 +557,74 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     setIsShiftModalOpen(true);
   };
 
-  const handleConfirmShift = (targetDay: number) => {
+  const handleConfirmShift = (targetDay: number, overrideCapacity = false) => {
     if (!shiftModalCard) return;
 
     if (targetDay < currentDay) {
-      showToast(
-        `Cannot move topics to past days.`,
-        'error'
-      );
+      showToast('Cannot move chapters to past days.', 'error');
       return;
     }
 
-    const nextCards = boardCards.map((c) =>
-      c.id === shiftModalCard.id ? { ...c, dayNumber: targetDay } : c
-    );
-    setBoardCards(nextCards);
-
-    showToast(
-      `Moved "${shiftModalCard.title}" to Day ${targetDay}.`,
-      'success'
-    );
-    setIsShiftModalOpen(false);
-    setShiftModalCard(null);
-
-    // Auto-save instantly to Firestore if saved (Task 3.4)
-    if (isChallengeSaved && savedChallengeId) {
-      persistAllocation(nextCards);
+    if (shiftModalCard.dayNumber === targetDay) {
+      setIsShiftModalOpen(false);
+      setShiftModalCard(null);
+      return;
     }
+
+    const targetCol = columns.find((c) => c.dayNumber === targetDay);
+    const capacity = targetCol?.capacityMinutes || 150;
+    const currentMinutes = boardCards
+      .filter((c) => c.dayNumber === targetDay && c.id !== shiftModalCard.id)
+      .reduce((sum, c) => sum + c.durationMinutes, 0);
+    const newTotal = currentMinutes + shiftModalCard.durationMinutes;
+
+    const executeShift = () => {
+      const nextCards = boardCards.map((c) => {
+        if (c.id === shiftModalCard.id) {
+          return {
+            ...c,
+            dayNumber: targetDay,
+            topics: (c.topics || []).map((t) => ({ ...t, dayNumber: targetDay })),
+          };
+        }
+        return c;
+      });
+      setBoardCards(nextCards);
+
+      showToast(
+        `Moved "${shiftModalCard.chapterName || shiftModalCard.title}" to Day ${targetDay}.`,
+        'success'
+      );
+      setIsShiftModalOpen(false);
+      setShiftModalCard(null);
+
+      // Auto-save instantly to Firestore if saved
+      if (isChallengeSaved && savedChallengeId) {
+        persistAllocation(nextCards);
+      }
+    };
+
+    // Capacity enforcement with deliberate override
+    if (newTotal > capacity && !overrideCapacity) {
+      setCapacityWarning({
+        isOpen: true,
+        card: shiftModalCard,
+        targetDay,
+        currentMinutes,
+        newTotal,
+        capacity,
+        onConfirm: () => {
+          executeShift();
+          setCapacityWarning(null);
+        },
+      });
+      return;
+    }
+
+    executeShift();
   };
 
-  // Auto-balance workload helper
+  // Auto-balance workload helper: collects only future cards and round-robins across future columns
   const handleAutoBalance = () => {
     if (isBoardLocked) {
       showToast('Please save the challenge first to unlock day balancing.', 'info');
@@ -378,11 +633,23 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     const futureCols = columns.filter((c) => c.dayNumber >= currentDay);
     if (futureCols.length === 0) return;
 
-    const nextCards = boardCards.map((c, idx) => {
-      if (c.dayNumber < currentDay) return c;
-      const assignedCol = futureCols[idx % futureCols.length];
-      return { ...c, dayNumber: assignedCol.dayNumber };
+    const futureDayNumbers = futureCols.map((c) => c.dayNumber);
+    const futureCards = boardCards.filter((c) => c.dayNumber >= currentDay);
+
+    const nextCards = boardCards.map((card) => {
+      if (card.dayNumber < currentDay) return card;
+      const futureIndex = futureCards.findIndex((fc) => fc.id === card.id);
+      if (futureIndex === -1) return card;
+      const targetDay = futureDayNumbers[futureIndex % futureDayNumbers.length];
+      return {
+        ...card,
+        dayNumber: targetDay,
+        topics: card.topics
+          ? card.topics.map((t) => ({ ...t, dayNumber: targetDay }))
+          : card.topics,
+      };
     });
+
     setBoardCards(nextCards);
 
     if (isChallengeSaved && savedChallengeId) {
@@ -392,7 +659,81 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     showToast('Workload distributed evenly across upcoming days.', 'success');
   };
 
-  // Challenge Saving Logic directly to Firestore `challenges` collection (Task 3.2)
+  // Helper to execute challenge persistence once uniqueness check passes
+  const executeCreateChallenge = async (selectedSyllabusItems: SyllabusItem[]) => {
+    setIsCreatingChallenge(true);
+    try {
+      const dayWiseAllocation: Record<string, BoardCard[]> = {};
+      columns.forEach((col) => {
+        dayWiseAllocation[`Day ${col.dayNumber}`] = boardCards.filter(
+          (c) => c.dayNumber === col.dayNumber
+        );
+      });
+
+      const totalMinutes = boardCards.reduce((acc, c) => acc + c.durationMinutes, 0);
+      const totalEstimatedHours = Number((totalMinutes / 60).toFixed(1));
+
+      // Initialize progress map for the creator
+      const initialProgress: Record<string, { theory: boolean; practice: boolean }> = {};
+      selectedSyllabusItems.forEach((top) => {
+        initialProgress[top.id] = { theory: false, practice: false };
+      });
+
+      const structuredPayload = {
+        challenge_id: `ch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        challenge_name: challengeName.trim(),
+        created_by: user!.uid,
+        creator_name: user!.name,
+        duration: duration!,
+        start_date: getLocalMidnightIso(startDate!),
+        end_date: computedEndDateIso || undefined,
+        selected_syllabus: selectedSyllabusItems.map((s) => ({
+          id: s.id,
+          subject: s.subject,
+          title: s.title,
+          subconcept: s.subconcept,
+          durationMinutes: s.durationMinutes,
+          tag: s.tag,
+        })),
+        day_wise_allocation: dayWiseAllocation,
+        participants: [
+          {
+            uid: user!.uid,
+            name: user!.name,
+            email: user!.email,
+            photoURL: user!.photoURL,
+            completed_topics: 0,
+            total_challenge_topics: selectedSyllabusItems.length,
+            last_completion_timestamp: Date.now(),
+            topic_progress: initialProgress,
+            joined_at: new Date().toISOString(),
+          },
+        ],
+      };
+
+      const savedChallenge = await createFirestoreChallenge(structuredPayload);
+
+      // Set as active challenge in global app context
+      setActiveChallenge(savedChallenge);
+      setSavedChallengeId(savedChallenge.challenge_id);
+      setIsChallengeSaved(true);
+
+      setChallengePayload({
+        ...savedChallenge,
+        totalTopics: selectedSyllabusItems.length,
+        totalEstimatedHours,
+      });
+      setIsStartModalOpen(true);
+      showToast('Challenge created and saved to Firestore! Schedule board is now unlocked.', 'success');
+    } catch (error) {
+      console.error('Failed to save challenge to Firestore:', error);
+      showToast('Failed to save challenge to cloud database.', 'error');
+    } finally {
+      setIsCreatingChallenge(false);
+    }
+  };
+
+  // ENFORCE ONE ACTIVE PERSONAL CHALLENGE PER ACCOUNT (Task 3.3)
   const handleStartChallenge = async () => {
     if (!user) {
       showToast('You must be signed in to create and save a challenge.', 'error');
@@ -422,75 +763,55 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     setIsCreatingChallenge(true);
 
-    // Group cards day-wise
-    const dayWiseAllocation: Record<string, BoardCard[]> = {};
-    columns.forEach((col) => {
-      dayWiseAllocation[`Day ${col.dayNumber}`] = boardCards.filter(
-        (c) => c.dayNumber === col.dayNumber
-      );
-    });
-
-    const totalMinutes = boardCards.reduce((acc, c) => acc + c.durationMinutes, 0);
-    const totalEstimatedHours = Number((totalMinutes / 60).toFixed(1));
-
-    // Initialize progress map for the creator
-    const initialProgress: Record<string, { theory: boolean; practice: boolean }> = {};
-    selectedSyllabusItems.forEach((top) => {
-      initialProgress[top.id] = { theory: false, practice: false };
-    });
-
-    const structuredPayload = {
-      challenge_id: `ch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      challenge_name: challengeName.trim(),
-      created_by: user.uid,
-      creator_name: user.name,
-      duration,
-      start_date: new Date(startDate + 'T00:00:00').toISOString(),
-      end_date: computedEndDateIso || undefined,
-      selected_syllabus: selectedSyllabusItems.map((s) => ({
-        id: s.id,
-        subject: s.subject,
-        title: s.title,
-        subconcept: s.subconcept,
-        durationMinutes: s.durationMinutes,
-        tag: s.tag,
-      })),
-      day_wise_allocation: dayWiseAllocation,
-      participants: [
-        {
-          uid: user.uid,
-          name: user.name,
-          email: user.email,
-          photoURL: user.photoURL,
-          completed_topics: 0,
-          total_challenge_topics: selectedSyllabusItems.length,
-          last_completion_timestamp: Date.now(),
-          topic_progress: initialProgress,
-          joined_at: new Date().toISOString(),
-        },
-      ],
-    };
-
     try {
-      const savedChallenge = await createFirestoreChallenge(structuredPayload);
+      const existingActive = await findActivePersonalChallenge(user.uid);
+      if (existingActive && existingActive.challenge_id !== savedChallengeId) {
+        setActiveChallengeConflict(existingActive);
+        setIsCreatingChallenge(false);
+        return;
+      }
 
-      // Set as active challenge in global app context
-      setActiveChallenge(savedChallenge);
-      setSavedChallengeId(savedChallenge.challenge_id);
-      setIsChallengeSaved(true);
-
-      setChallengePayload({
-        ...savedChallenge,
-        totalTopics: boardCards.length,
-        totalEstimatedHours,
-      });
-      setIsStartModalOpen(true);
-      showToast('Challenge created and saved to Firestore! Schedule board is now unlocked.', 'success');
+      await executeCreateChallenge(selectedSyllabusItems);
     } catch (error) {
-      console.error('Failed to save challenge to Firestore:', error);
-      showToast('Failed to save challenge to cloud database.', 'error');
-    } finally {
+      console.error('Failed to check existing challenges:', error);
+      showToast('Failed to verify challenge status. Please try again.', 'error');
       setIsCreatingChallenge(false);
+    }
+  };
+
+  // Conflict Modal Handlers
+  const handleKeepExistingChallenge = () => {
+    if (!activeChallengeConflict) return;
+    loadChallengeIntoWizard(activeChallengeConflict);
+    setActiveChallengeConflict(null);
+    showToast(`Loaded active challenge: "${activeChallengeConflict.challenge_name}".`, 'info');
+  };
+
+  const handleArchiveAndStartNew = async () => {
+    if (!activeChallengeConflict) return;
+    try {
+      await archiveChallenge(activeChallengeConflict.challenge_id);
+      showToast(`Archived previous challenge "${activeChallengeConflict.challenge_name}".`, 'info');
+      setActiveChallengeConflict(null);
+      const selected = syllabus.filter((s) => s.checked);
+      await executeCreateChallenge(selected);
+    } catch (err) {
+      console.error('Failed to archive existing challenge:', err);
+      showToast('Failed to archive existing challenge.', 'error');
+    }
+  };
+
+  const handleDeleteAndStartNew = async () => {
+    if (!activeChallengeConflict) return;
+    try {
+      await deleteFirestoreChallenge(activeChallengeConflict.challenge_id);
+      showToast(`Deleted previous challenge "${activeChallengeConflict.challenge_name}".`, 'info');
+      setActiveChallengeConflict(null);
+      const selected = syllabus.filter((s) => s.checked);
+      await executeCreateChallenge(selected);
+    } catch (err) {
+      console.error('Failed to delete existing challenge:', err);
+      showToast('Failed to delete existing challenge.', 'error');
     }
   };
 
@@ -1142,7 +1463,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                     <span className="font-bold text-blue-700">{activeCard.subject}</span>
                     <span className="text-[#707971] font-mono">{activeCard.durationMinutes}m</span>
                   </div>
-                  <h4 className="text-xs font-bold text-[#0b1c30]">{activeCard.title}</h4>
+                  <h4 className="text-xs font-bold text-[#0b1c30]">{activeCard.chapterName || activeCard.title}</h4>
+                  <div className="text-[10px] text-[#707971] mt-1 font-mono">
+                    {activeCard.topics?.length || 1} {(activeCard.topics?.length || 1) === 1 ? 'topic' : 'topics'}
+                  </div>
                 </div>
               )}
             </DragOverlay>
@@ -1166,6 +1490,119 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         onClose={() => setIsStartModalOpen(false)}
         challengeData={challengePayload}
       />
+
+      {/* Capacity Warning Confirmation Modal */}
+      {capacityWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-amber-300 flex flex-col gap-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-2xl">warning</span>
+              </div>
+              <div>
+                <h3 className="text-base text-[#0b1c30] font-bold">
+                  Daily Capacity Warning
+                </h3>
+                <p className="text-xs text-[#404942]">
+                  Target day load exceeds recommended limit
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-[#0b1c30] space-y-2">
+              <p>
+                <strong>Day {capacityWarning.targetDay}</strong> currently has{' '}
+                <span className="font-mono font-bold">{capacityWarning.currentMinutes} min</span>.
+                Adding "<strong>{capacityWarning.card.chapterName || capacityWarning.card.title}</strong>" ({capacityWarning.card.durationMinutes} min) brings total workload to{' '}
+                <span className="font-mono font-bold text-amber-900">{capacityWarning.newTotal} min</span> (standard capacity: {capacityWarning.capacity} min).
+              </p>
+              <p className="text-[11px] text-[#404942]">
+                Overloading study sessions may increase burnout. You can override deliberately if you wish to proceed.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#e5eeff]">
+              <button
+                type="button"
+                onClick={() => setCapacityWarning(null)}
+                className="px-4 py-2 rounded-xl text-[#404942] hover:bg-[#eff4ff] text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={capacityWarning.onConfirm}
+                className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-sm">check</span>
+                Override &amp; Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active Personal Challenge Conflict Modal */}
+      {activeChallengeConflict && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-[#c0c9c0]/50 flex flex-col gap-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-2xl">info</span>
+              </div>
+              <div>
+                <h3 className="text-base text-[#0b1c30] font-bold">
+                  Active Challenge Already in Progress
+                </h3>
+                <p className="text-xs text-[#404942]">
+                  Each account can maintain only one active personal sprint
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-[#eff4ff] border border-[#c0c9c0]/30 text-xs text-[#0b1c30] space-y-2">
+              <p>
+                You already have an ongoing personal challenge:{' '}
+                <strong className="text-[#003820]">"{activeChallengeConflict.challenge_name}"</strong> ({activeChallengeConflict.duration}-day sprint).
+              </p>
+              <p className="text-[#404942] text-[11px] leading-relaxed">
+                To create a new challenge, you can archive or delete your existing sprint so your academic records are properly maintained without orphaned database entries.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2 border-t border-[#e5eeff]">
+              <button
+                type="button"
+                onClick={() => setActiveChallengeConflict(null)}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl text-[#404942] hover:bg-[#eff4ff] text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleKeepExistingChallenge}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-white border border-[#c0c9c0] hover:bg-[#eff4ff] text-[#0b1c30] text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Keep Existing
+              </button>
+              <button
+                type="button"
+                onClick={handleArchiveAndStartNew}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Archive Old &amp; Start New
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAndStartNew}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Delete Old &amp; Start New
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

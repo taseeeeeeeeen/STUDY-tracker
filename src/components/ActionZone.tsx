@@ -242,14 +242,17 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
             return (
               <div
                 key={task.id}
-                className="bg-white p-4 sm:p-5 rounded-2xl shadow-xs hover:shadow-sm border border-[#c0c9c0]/30 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                className={`bg-white p-4 sm:p-5 rounded-2xl shadow-xs hover:shadow-sm border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                  task.isCarriedOver
+                    ? 'border-red-400 ring-2 ring-red-400/25 bg-red-50/10'
+                    : 'border-[#c0c9c0]/30'
+                }`}
               >
                 <div className="flex items-start gap-4 min-w-0">
                   <div
-                    className={`w-1.5 h-12 rounded-full shrink-0 mt-0.5 ${getSubjectAccent(
-                      task.subject,
-                      false
-                    )}`}
+                    className={`w-1.5 h-12 rounded-full shrink-0 mt-0.5 ${
+                      task.isCarriedOver ? 'bg-[#ba1a1a]' : getSubjectAccent(task.subject, false)
+                    }`}
                   />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -264,6 +267,13 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
                         <span className="material-symbols-outlined text-xs">timer</span>{' '}
                         {task.durationMinutes} min
                       </span>
+
+                      {task.isCarriedOver && (
+                        <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-300 text-[11px] font-semibold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse" />
+                          Carried Over {task.carriedOverFromDay ? `(Day ${task.carriedOverFromDay})` : ''}
+                        </span>
+                      )}
 
                       {isCompleted && (
                         <span className="px-2 py-0.5 rounded bg-[#6ffbbe]/30 text-[#003820] text-[11px] font-semibold">

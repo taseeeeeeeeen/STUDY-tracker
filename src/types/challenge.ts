@@ -24,6 +24,8 @@ export interface FirestoreChallenge {
   duration: number;
   start_date: string;
   end_date?: string;
+  status?: 'active' | 'archived' | 'completed';
+  archivedAt?: string;
   selected_syllabus: {
     id: string;
     subject: string;

@@ -1,3 +1,7 @@
+import { BoardCard, BoardTopic } from '../types/wizard';
+import { FirestoreChallenge } from '../types/challenge';
+import { UserProgressDoc } from '../services/userProgressService';
+
 export interface DedupableSyllabusTopic {
   id: string;
   subject: string;
@@ -80,4 +84,266 @@ export function dedupeSyllabusTopics(topics: DedupableSyllabusTopic[]): Dedupabl
 
     return merged;
   });
+}
+
+import {
+  computeCurrentSprintDay,
+  getMidnightEndOfDay,
+} from './dateUtils';
+export {
+  computeCurrentSprintDay,
+  getMidnightEndOfDay,
+};
+
+/**
+ * Checks whether a topic was fully completed before a specific midnight cutoff timestamp.
+ * Reads completion state primarily from participants[].topic_progress (or userProgressDoc).
+ */
+export function isTopicCompletedBeforeMidnight(
+  topicId: string,
+  cutoffTimestampMs: number,
+  userProgressDoc: UserProgressDoc | null,
+  participantProgress?: Record<string, { theory: boolean; practice: boolean }> | null
+): boolean {
+  // Check participant topic_progress first as primary source of truth
+  if (participantProgress) {
+    const prog = participantProgress[topicId];
+    if (!prog || !prog.theory || !prog.practice) {
+      return false;
+    }
+  } else if (userProgressDoc) {
+    const prog = userProgressDoc.topicProgress?.[topicId];
+    if (!prog || !prog.theory || !prog.practice) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  const log = userProgressDoc?.completionLog?.[topicId];
+  if (!log) {
+    return true;
+  }
+  const theoryTime = log.theory || 0;
+  const practiceTime = log.practice || 0;
+  const maxCompletionTime = Math.max(theoryTime, practiceTime);
+  return maxCompletionTime > 0 && maxCompletionTime <= cutoffTimestampMs;
+}
+
+/**
+ * Performs midnight day-reset / rollover on challenge allocation.
+ * Unfinished topics from past days automatically move to the current day's allocation.
+ * Completed topics stay on their original day as completed and never roll forward.
+ * Carried-over topics are marked with isCarriedOver = true and carriedOverFromDay.
+ * This operation is strictly idempotent.
+ */
+export function performMidnightRollover(
+  challenge: FirestoreChallenge,
+  userProgressDoc: UserProgressDoc | null,
+  nowMs: number = Date.now(),
+  currentUserId?: string
+): {
+  updatedAllocation: Record<string, BoardCard[]>;
+  hasChanges: boolean;
+  carriedCount: number;
+} {
+  if (!challenge || !challenge.day_wise_allocation || !challenge.start_date) {
+    return {
+      updatedAllocation: (challenge?.day_wise_allocation as Record<string, BoardCard[]>) || {},
+      hasChanges: false,
+      carriedCount: 0,
+    };
+  }
+
+  const currentDay = computeCurrentSprintDay(challenge.start_date, challenge.duration, nowMs);
+  if (currentDay <= 1) {
+    return {
+      updatedAllocation: challenge.day_wise_allocation as Record<string, BoardCard[]>,
+      hasChanges: false,
+      carriedCount: 0,
+    };
+  }
+
+  // Find participant topic_progress as completion source of truth
+  const targetUid = currentUserId || challenge.created_by;
+  const participant = challenge.participants?.find((p) => p.uid === targetUid);
+  const participantProgress = participant?.topic_progress || null;
+
+  // Deep clone day_wise_allocation
+  const updatedAllocation: Record<string, BoardCard[]> = {};
+  const allDayKeys = Object.keys(challenge.day_wise_allocation);
+  allDayKeys.forEach((key) => {
+    const rawCards = (challenge.day_wise_allocation![key] || []) as any[];
+    updatedAllocation[key] = rawCards.map((c) => ({
+      ...c,
+      topics: Array.isArray(c.topics)
+        ? c.topics.map((t: any) => ({ ...t }))
+        : [
+            {
+              id: c.id?.replace(/^card-/, '') || c.id,
+              title: c.title,
+              subconcept: c.subconcept,
+              durationMinutes: c.durationMinutes || 45,
+              tag: c.tag,
+              isCarriedOver: c.isCarriedOver,
+              carriedOverFromDay: c.carriedOverFromDay,
+            },
+          ],
+    }));
+  });
+
+  const currentDayKey = `Day ${currentDay}`;
+  if (!updatedAllocation[currentDayKey]) {
+    updatedAllocation[currentDayKey] = [];
+  }
+
+  // Set of all topic IDs already scheduled for the current day
+  const todayTopicsMap = new Set<string>();
+  const todayCards = updatedAllocation[currentDayKey] || [];
+  todayCards.forEach((c) => {
+    if (Array.isArray(c.topics)) {
+      c.topics.forEach((t) => todayTopicsMap.add(t.id));
+    }
+  });
+
+  let hasChanges = false;
+  let carriedCount = 0;
+
+  for (let d = 1; d < currentDay; d++) {
+    const dayKey = `Day ${d}`;
+    const cardsForDay = updatedAllocation[dayKey] || [];
+    const cutoffTime = getMidnightEndOfDay(challenge.start_date, d);
+
+    for (const card of cardsForDay) {
+      if (!Array.isArray(card.topics)) continue;
+
+      for (const topic of card.topics) {
+        const completedInTime = isTopicCompletedBeforeMidnight(
+          topic.id,
+          cutoffTime,
+          userProgressDoc,
+          participantProgress
+        );
+
+        if (!completedInTime) {
+          // Unfinished topic from past day -> carry over to current day
+          if (!topic.isCarriedOver) {
+            topic.isCarriedOver = true;
+            topic.carriedOverFromDay = d;
+            hasChanges = true;
+          }
+
+          if (!todayTopicsMap.has(topic.id)) {
+            todayTopicsMap.add(topic.id);
+            carriedCount++;
+            hasChanges = true;
+
+            const chId = card.chapterId || card.id;
+            let targetChapterCard = updatedAllocation[currentDayKey].find(
+              (c) => (c.chapterId || c.id) === chId
+            );
+
+            const rolledTopic: BoardTopic = {
+              id: topic.id,
+              title: topic.title,
+              subconcept: topic.subconcept,
+              durationMinutes: topic.durationMinutes,
+              tag: topic.tag,
+              subject: topic.subject || card.subject || 'Physics',
+              chapterId: chId,
+              chapterName: card.chapterName || card.title,
+              isCarriedOver: true,
+              carriedOverFromDay: d,
+            };
+
+            if (targetChapterCard) {
+              targetChapterCard.topics = targetChapterCard.topics || [];
+              targetChapterCard.topics.push(rolledTopic);
+              targetChapterCard.durationMinutes =
+                (targetChapterCard.durationMinutes || 0) + (topic.durationMinutes || 0);
+              targetChapterCard.isCarriedOver = true;
+              targetChapterCard.tag = `${targetChapterCard.topics.length} topics`;
+            } else {
+              const newChapterCard: BoardCard = {
+                id: `chapter-${chId}`,
+                chapterId: chId,
+                chapterName: card.chapterName || card.title,
+                subject: card.subject,
+                title: card.title || card.chapterName || 'Chapter',
+                durationMinutes: topic.durationMinutes || 45,
+                tag: '1 topic',
+                dayNumber: currentDay,
+                isCarriedOver: true,
+                carriedOverFromDay: d,
+                topics: [rolledTopic],
+              };
+              updatedAllocation[currentDayKey].push(newChapterCard);
+            }
+          }
+        }
+      }
+
+      if (card.topics.some((t) => t.isCarriedOver)) {
+        if (!card.isCarriedOver) {
+          card.isCarriedOver = true;
+          hasChanges = true;
+        }
+      }
+    }
+  }
+
+  return {
+    updatedAllocation,
+    hasChanges,
+    carriedCount,
+  };
+}
+
+/**
+ * Flattens chapter-level dayWiseAllocation into individual topic records for dashboard consumption.
+ */
+export function flattenAllocationToTopics(
+  dayWiseAllocation: Record<string, unknown[]> | undefined
+): Record<string, BoardTopic[]> {
+  const result: Record<string, BoardTopic[]> = {};
+  if (!dayWiseAllocation) return result;
+
+  Object.entries(dayWiseAllocation).forEach(([dayKey, cards]) => {
+    result[dayKey] = [];
+    if (!Array.isArray(cards)) return;
+
+    cards.forEach((card: any) => {
+      if (Array.isArray(card.topics) && card.topics.length > 0) {
+        card.topics.forEach((t: any) => {
+          result[dayKey].push({
+            id: t.id,
+            title: t.title,
+            subconcept: t.subconcept,
+            durationMinutes: t.durationMinutes || 45,
+            tag: t.tag,
+            subject: t.subject || card.subject || 'Physics',
+            chapterId: card.chapterId,
+            chapterName: card.chapterName || card.title,
+            isCarriedOver: Boolean(t.isCarriedOver || card.isCarriedOver),
+            carriedOverFromDay: t.carriedOverFromDay || card.carriedOverFromDay,
+          });
+        });
+      } else {
+        result[dayKey].push({
+          id: card.id?.replace(/^card-/, '') || card.id,
+          title: card.title,
+          subconcept: card.subconcept,
+          durationMinutes: card.durationMinutes || 45,
+          tag: card.tag,
+          subject: card.subject || 'Physics',
+          chapterId: card.chapterId,
+          chapterName: card.chapterName || card.title,
+          isCarriedOver: Boolean(card.isCarriedOver),
+          carriedOverFromDay: card.carriedOverFromDay,
+        });
+      }
+    });
+  });
+
+  return result;
 }

@@ -29,6 +29,8 @@ export const MainDashboardPage: React.FC = () => {
     toggleDashboardPractice,
     addDashboardTopic,
     resetActiveChallenge,
+    archiveActiveChallenge,
+    deleteActiveChallenge,
   } = useStudyTrack();
 
   const [isAddTopicOpen, setIsAddTopicOpen] = useState(false);
@@ -125,6 +127,8 @@ export const MainDashboardPage: React.FC = () => {
           backlog={backlog}
           sprint={sprint}
           onReset={resetActiveChallenge}
+          onArchive={archiveActiveChallenge}
+          onDelete={deleteActiveChallenge}
         />
 
         {/* Main Grid: 7 Cols (Today's Action Zone) + 5 Cols (Analytics & Widgets) */}
