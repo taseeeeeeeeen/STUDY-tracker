@@ -22,8 +22,6 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
     activeChallenge,
     peers,
     sortedPeers,
-    generateNewChallengeCode,
-    updateUserPeerTopics,
     joinChallengeCode,
     triggerToast,
   } = useStudyTrack();
@@ -38,6 +36,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
 
   // REQUIREMENT 1: Challenge Code Generator & Clipboard Copy
   const handleCopyCode = () => {
+    if (!challenge.code) return;
     navigator.clipboard
       .writeText(challenge.code)
       .then(() => {
@@ -82,16 +81,65 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
     return true;
   });
 
-  const handleSimulateTieBreaker = () => {
-    const nusrat = peers.find((p) => p.name === 'Nusrat Jahan');
-    if (nusrat && currentUser) {
-      const diff = nusrat.completed_topics - currentUser.completed_topics;
-      updateUserPeerTopics(diff);
-      triggerToast(
-        `Tie-Breaker Demo: Elena & Nusrat both have 24 topics (80%). Nusrat finished earlier, so Nusrat holds the higher rank!`
-      );
-    }
-  };
+  if (!activeChallenge) {
+    return (
+      <div className="w-full flex flex-col font-sans">
+        <main className="w-full flex-1">
+          <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-8 py-12 flex flex-col items-center justify-center gap-8">
+            <div className="text-center space-y-3 max-w-md">
+              <div className="w-20 h-20 bg-[#eff4ff] rounded-3xl flex items-center justify-center mx-auto shadow-sm border border-[#c0c9c0]/20">
+                <span className="material-symbols-outlined text-4xl text-[#003820]">group_off</span>
+              </div>
+              <h2 className="text-2xl font-bold text-[#0b1c30]">No Active Challenge</h2>
+              <p className="text-sm text-[#404942]">
+                You haven't joined or created a study challenge yet. Join a friend's room or start your own sprint to unlock the Peer Arena.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-4 w-full max-w-lg">
+              <Link
+                to="/challenges"
+                className="flex-1 w-full px-6 py-3 bg-[#003820] text-white rounded-2xl font-bold text-sm shadow-md hover:bg-[#0f5132] transition-all flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined">add_task</span>
+                Create My Own Challenge
+              </Link>
+              
+              <div className="flex-1 w-full">
+                <form
+                  onSubmit={handleJoinChallenge}
+                  className="flex items-center gap-2 bg-white p-2 rounded-2xl shadow-xs border border-[#c0c9c0]/30"
+                >
+                  <input
+                    type="text"
+                    value={joinInputCode}
+                    onChange={(e) => setJoinInputCode(e.target.value)}
+                    placeholder="Enter Room Code"
+                    className="flex-1 px-3 py-2 text-xs bg-[#eff4ff] text-[#0b1c30] rounded-xl outline-none font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={joining}
+                    className="bg-[#003820] text-white p-2 rounded-xl disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-base">arrow_forward</span>
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            <button
+              onClick={handleBack}
+              className="text-xs text-[#707971] hover:text-[#0b1c30] flex items-center gap-1 font-medium transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">arrow_back</span>
+              Back to Dashboard
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full flex flex-col font-sans">
@@ -104,18 +152,18 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
               <div className="flex items-center gap-2">
                 <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-[#6ffbbe]/25 text-[#003820] text-xs font-semibold font-mono border border-[#6ffbbe]/60">
                   <span className="material-symbols-outlined text-sm mr-1">bolt</span>
-                  LIVE SPRINT ARENA
+                  Study Group Leaderboard
                 </span>
                 <span className="text-xs text-[#404942] flex items-center gap-1 font-mono">
                   <span className="w-2 h-2 rounded-full bg-[#006c49] animate-pulse" />
-                  {challenge.activePeersCount} online contenders
+                  {challenge.activePeersCount} participants
                 </span>
               </div>
               <h1 className="text-3xl sm:text-4xl text-[#0b1c30] font-bold tracking-tight">
                 Peer Arena & Live Leaderboard
               </h1>
               <p className="text-xs text-[#404942]">
-                Compete with study squads, track real-time chapter sprints, and climb the academic ladder with instant tie-breaker math.
+                Study together with friends, track progress, and see where everyone stands.
               </p>
             </div>
 
@@ -132,7 +180,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                   type="text"
                   value={joinInputCode}
                   onChange={(e) => setJoinInputCode(e.target.value)}
-                  placeholder="Enter Challenge Code (e.g. CH-9A2X)"
+                  placeholder="Enter code (e.g. CH-9A2X)"
                   className="pl-9 pr-3 py-2 text-xs bg-[#eff4ff] text-[#0b1c30] placeholder:text-[#707971] rounded-xl outline-none w-56 sm:w-64 focus:bg-white border border-transparent focus:border-[#003820] transition-all font-mono"
                 />
               </div>
@@ -142,7 +190,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                 className="bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-50"
               >
                 <span className="material-symbols-outlined text-base">group_add</span>
-                <span>{joining ? 'Joining...' : 'Join Challenge'}</span>
+                <span>{joining ? 'Joining...' : 'Join'}</span>
               </button>
             </form>
           </section>
@@ -154,7 +202,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
               <div className="space-y-1.5">
                 <div className="flex items-center gap-3">
                   <span className="px-3 py-0.5 bg-[#003820] text-white text-[11px] font-semibold rounded-full font-mono">
-                    Active Event
+                    Active Sprint
                   </span>
                   <span className="text-xs text-[#404942] flex items-center gap-1 font-medium">
                     <span className="material-symbols-outlined text-sm text-[#006c49]">
@@ -171,15 +219,15 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     <span className="material-symbols-outlined text-sm text-[#006c49]">
                       groups
                     </span>
-                    {peers.length} Active Peers
+                    {peers.length} Members
                   </span>
                   <span className="text-[#c0c9c0]">•</span>
                   <span className="flex items-center gap-1 font-semibold text-[#ba1a1a]">
                     <span className="material-symbols-outlined text-sm">timer</span>
-                    Sprint closes in: {challenge.timeRemainingStr}
+                    Time left: {challenge.timeRemainingStr}
                   </span>
                   <span className="text-[#c0c9c0]">•</span>
-                  <span className="font-mono">Target: {challenge.totalTopics} Master Topics</span>
+                  <span className="font-mono">Target: {challenge.totalTopics} Topics</span>
                 </div>
               </div>
 
@@ -187,7 +235,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
               <div className="flex flex-wrap items-center gap-3 bg-[#eff4ff] p-3 rounded-2xl border border-[#c0c9c0]/30">
                 <div className="flex flex-col">
                   <span className="text-[10px] text-[#404942] uppercase tracking-wider font-semibold font-mono">
-                    Your Active Challenge Code
+                    Challenge Code
                   </span>
                   <span
                     id="challengeCodeText"
@@ -203,65 +251,15 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     type="button"
                     onClick={handleCopyCode}
                     className="px-3 py-2 bg-white text-[#0b1c30] text-xs font-semibold rounded-xl hover:bg-[#e5eeff] shadow-xs border border-[#c0c9c0]/30 transition-all flex items-center gap-1.5 cursor-pointer"
-                    title="Copy active challenge code to clipboard"
+                    title="Copy challenge code"
                   >
                     <span className="material-symbols-outlined text-base">
                       {copyFeedback ? 'check' : 'content_copy'}
                     </span>
                     <span>{copyFeedback ? 'Copied!' : 'Copy'}</span>
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={generateNewChallengeCode}
-                    className="px-3 py-2 bg-white text-[#003820] text-xs font-semibold rounded-xl hover:bg-[#e5eeff] shadow-xs border border-[#c0c9c0]/30 transition-all flex items-center gap-1 cursor-pointer"
-                    title="Generate a new random 6-character challenge code"
-                  >
-                    <span className="material-symbols-outlined text-base">refresh</span>
-                    <span>New Code</span>
-                  </button>
                 </div>
               </div>
-            </div>
-          </section>
-
-          {/* Interactive Tester Simulation Strip */}
-          <section className="bg-white p-4 rounded-2xl border border-blue-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
-            <div className="flex items-center gap-2.5">
-              <span className="material-symbols-outlined text-blue-600 text-xl">
-                calculate
-              </span>
-              <div>
-                <p className="font-bold text-[#0b1c30]">
-                  Live Math Simulator: Test Sorting & Tie-Breaker Logic
-                </p>
-                <p className="text-[11px] text-[#404942]">
-                  Elena Vance has <strong>{currentUser?.completed_topics || 0} / 30</strong> topics ({Math.round(currentUser?.scorePercent || 0)}%) — Currently Rank #{currentUser?.rank || 4}.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              <button
-                onClick={() => updateUserPeerTopics(1)}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-sm">add</span>
-                <span>Complete +1 Topic</span>
-              </button>
-              <button
-                onClick={() => updateUserPeerTopics(-1)}
-                className="px-3 py-1.5 bg-[#eff4ff] hover:bg-[#e5eeff] text-[#0b1c30] font-semibold rounded-xl transition-colors cursor-pointer border border-[#c0c9c0]/30"
-              >
-                <span>-1 Topic</span>
-              </button>
-              <button
-                onClick={handleSimulateTieBreaker}
-                className="px-3 py-1.5 bg-[#e5eeff] hover:bg-[#dce9ff] text-[#003820] font-semibold rounded-xl transition-colors cursor-pointer"
-                title="Set Elena's topics equal to Nusrat (24 topics) to verify tie-breaker logic"
-              >
-                ⚖️ Test Tie-Breaker
-              </button>
             </div>
           </section>
 
@@ -269,9 +267,9 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
           <section className="w-full">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-lg font-bold text-[#0b1c30]">Sprint Podium</h3>
+                <h3 className="text-lg font-bold text-[#0b1c30]">Top Students</h3>
                 <p className="text-xs text-[#404942]">
-                  Top scoring sprint leaders sorted by Score % and completion timestamp
+                  Ranked by completed topics and study activity
                 </p>
               </div>
               <span className="text-xs text-[#006c49] font-mono flex items-center gap-1 bg-[#eff4ff] px-3 py-1 rounded-full border border-[#c0c9c0]/30">
@@ -285,7 +283,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                 <div
                   onClick={() => setSelectedPeerForModal(rank2)}
                   className="order-2 md:order-1 bg-white rounded-2xl p-6 shadow-xs border border-[#c0c9c0]/30 flex flex-col items-center text-center transition-all hover:-translate-y-1 hover:shadow-md hover:border-slate-400 duration-200 relative overflow-hidden cursor-pointer group"
-                  title="Click to inspect this peer's syllabus progress"
+                  title="Click to view progress"
                 >
                   <div className="w-full flex justify-between items-center mb-3">
                     <span className="px-2.5 py-0.5 rounded-full bg-[#e5eeff] text-[#0b1c30] text-xs font-bold font-mono flex items-center gap-1 border border-[#c0c9c0]/40">
@@ -298,11 +296,17 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                   </div>
 
                   <div className="relative mb-3">
-                    <img
-                      src={rank2.avatarUrl}
-                      alt={rank2.name}
-                      className="w-20 h-20 rounded-full object-cover shadow-xs ring-4 ring-slate-300 group-hover:scale-105 transition-transform"
-                    />
+                    {rank2.avatarUrl ? (
+                      <img
+                        src={rank2.avatarUrl}
+                        alt={rank2.name}
+                        className="w-20 h-20 rounded-full object-cover shadow-xs ring-4 ring-slate-300 group-hover:scale-105 transition-transform"
+                      />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-[#003820] text-[#6ffbbe] flex items-center justify-center font-black text-xl shadow-xs ring-4 ring-slate-300 group-hover:scale-105 transition-transform">
+                        {rank2.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
                     <span className="absolute -bottom-1 -right-1 bg-slate-200 text-[#0b1c30] text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-xs">
                       2
                     </span>
@@ -344,12 +348,12 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                 <div
                   onClick={() => setSelectedPeerForModal(rank1)}
                   className="order-1 md:order-2 bg-white rounded-2xl p-7 shadow-md border-2 border-amber-300 flex flex-col items-center text-center transition-all hover:-translate-y-1 hover:shadow-xl hover:border-amber-400 duration-200 relative overflow-hidden -mt-0 md:-mt-4 cursor-pointer group"
-                  title="Click to inspect this peer's syllabus progress"
+                  title="Click to view progress"
                 >
                   <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500" />
                   <div className="w-full flex justify-between items-center mb-4">
                     <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold font-mono flex items-center gap-1 shadow-xs border border-amber-300">
-                      <span>🏆</span> Sprint Champion
+                      <span>🏆</span> 1st Place
                     </span>
                     <span className="text-xs text-[#ba1a1a] font-bold flex items-center gap-1 font-mono">
                       <span className="material-symbols-outlined text-sm">local_fire_department</span>
@@ -358,11 +362,17 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                   </div>
 
                   <div className="relative mb-3">
-                    <img
-                      src={rank1.avatarUrl}
-                      alt={rank1.name}
-                      className="w-24 h-24 rounded-full object-cover shadow-md ring-4 ring-amber-400 group-hover:scale-105 transition-transform"
-                    />
+                    {rank1.avatarUrl ? (
+                      <img
+                        src={rank1.avatarUrl}
+                        alt={rank1.name}
+                        className="w-24 h-24 rounded-full object-cover shadow-md ring-4 ring-amber-400 group-hover:scale-105 transition-transform"
+                      />
+                    ) : (
+                      <div className="w-24 h-24 rounded-full bg-[#003820] text-[#6ffbbe] flex items-center justify-center font-black text-2xl shadow-md ring-4 ring-amber-400 group-hover:scale-105 transition-transform">
+                        {rank1.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
                     <span className="absolute -bottom-2 -right-1 bg-amber-400 text-[#002111] text-sm font-extrabold w-8 h-8 rounded-full flex items-center justify-center shadow-sm">
                       1
                     </span>
@@ -376,7 +386,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
 
                   <div className="w-full mt-4 pt-3 bg-[#eff4ff] rounded-2xl p-4 border border-[#c0c9c0]/30">
                     <div className="flex justify-between items-center text-xs mb-1">
-                      <span className="text-[#404942] font-medium">Sprint Mastery</span>
+                      <span className="text-[#404942] font-medium">Completed</span>
                       <span className="font-bold text-[#003820] text-sm font-mono">
                         {Math.round(rank1.scorePercent)}%
                       </span>
@@ -389,7 +399,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     </div>
                     <div className="flex justify-between items-center text-xs font-mono text-[#404942]">
                       <span className="text-[#0b1c30] font-semibold">
-                        {rank1.completed_topics} / {rank1.total_challenge_topics} Topics Done
+                        {rank1.completed_topics} / {rank1.total_challenge_topics} Topics completed
                       </span>
                       <span className="text-[#006c49] font-bold">
                         {rank1.velocityPerDay} topics/day
@@ -404,7 +414,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                 <div
                   onClick={() => setSelectedPeerForModal(rank3)}
                   className="order-3 bg-white rounded-2xl p-6 shadow-xs border border-[#c0c9c0]/30 flex flex-col items-center text-center transition-all hover:-translate-y-1 hover:shadow-md hover:border-amber-700/50 duration-200 relative overflow-hidden cursor-pointer group"
-                  title="Click to inspect this peer's syllabus progress"
+                  title="Click to view progress"
                 >
                   <div className="w-full flex justify-between items-center mb-3">
                     <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 text-xs font-bold font-mono flex items-center gap-1 border border-amber-200">
@@ -417,11 +427,17 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                   </div>
 
                   <div className="relative mb-3">
-                    <img
-                      src={rank3.avatarUrl}
-                      alt={rank3.name}
-                      className="w-20 h-20 rounded-full object-cover shadow-xs ring-4 ring-amber-700/40 group-hover:scale-105 transition-transform"
-                    />
+                    {rank3.avatarUrl ? (
+                      <img
+                        src={rank3.avatarUrl}
+                        alt={rank3.name}
+                        className="w-20 h-20 rounded-full object-cover shadow-xs ring-4 ring-amber-700/40 group-hover:scale-105 transition-transform"
+                      />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-[#003820] text-[#6ffbbe] flex items-center justify-center font-black text-xl shadow-xs ring-4 ring-amber-700/40 group-hover:scale-105 transition-transform">
+                        {rank3.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
                     <span className="absolute -bottom-1 -right-1 bg-amber-700/60 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-xs">
                       3
                     </span>
@@ -524,7 +540,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     <th className="py-2.5 px-3">Active Focus</th>
                     <th className="py-2.5 px-3">Completed</th>
                     <th className="py-2.5 px-3 w-48">Score %</th>
-                    <th className="py-2.5 px-3">Velocity</th>
+                    <th className="py-2.5 px-3">Topics / Day</th>
                     <th className="py-2.5 px-3 text-right rounded-r-xl">Trend</th>
                   </tr>
                 </thead>
@@ -715,7 +731,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                   check_circle
                 </span>
                 <span>
-                  Tie-breaker formula: Equal Score % resolves ascending by completion timestamp.
+                  Members with the same score are ranked by earliest completion time.
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -724,7 +740,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                   onClick={onBackToDashboard}
                   className="px-3 py-1 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] text-[#0b1c30] transition-colors cursor-pointer font-medium"
                 >
-                  Return to Dashboard
+                  Back to Dashboard
                 </button>
               </div>
             </div>
@@ -738,7 +754,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-blue-700 font-bold uppercase tracking-wider flex items-center gap-1 font-mono">
                     <span className="material-symbols-outlined text-sm">trending_up</span>
-                    Target Gap
+                    Next Goal
                   </span>
                   <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-mono text-[11px] font-bold">
                     Rank #{currentUser?.rank || 4} ➔ #{Math.max(1, (currentUser?.rank || 4) - 1)}
@@ -746,25 +762,25 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                 </div>
                 <h4 className="text-base text-[#0b1c30] font-bold">
                   {currentUser && rank3 && currentUser.completed_topics < rank3.completed_topics
-                    ? `${rank3.completed_topics - currentUser.completed_topics} Topics to Podium Overtake`
+                    ? `${rank3.completed_topics - currentUser.completed_topics} topics to reach the top 3`
                     : 'Podium Secured!'}
                 </h4>
                 <p className="text-xs text-[#404942]">
-                  You are tracking close to the leaders. Complete your next scheduled problem set before 10:00 PM to improve your standing.
+                  Keep studying today to move up the rankings.
                 </p>
               </div>
 
               <div className="mt-4 pt-3 border-t border-[#e5eeff]/80 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-blue-500" />
-                  <span className="font-mono text-[#0b1c30]">Velocity: +0.4 top/d faster</span>
+                  <span className="font-mono text-[#0b1c30]">Keep a steady study pace</span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => updateUserPeerTopics(1)}
+                  onClick={handleBack}
                   className="text-blue-700 hover:text-blue-900 font-bold flex items-center gap-0.5 cursor-pointer font-mono"
                 >
-                  Solve Next <span className="material-symbols-outlined text-sm">chevron_right</span>
+                  Study Now <span className="material-symbols-outlined text-sm">chevron_right</span>
                 </button>
               </div>
             </div>
@@ -774,24 +790,23 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-[#006c49] font-bold uppercase tracking-wider flex items-center gap-1 font-mono">
-                    <span className="material-symbols-outlined text-sm">analytics</span> Cohort
-                    Pulse
+                    <span className="material-symbols-outlined text-sm">analytics</span> Group Progress
                   </span>
                   <span className="text-xs text-[#006c49] font-semibold font-mono">
-                    +4.2% this week
+                    Weekly update
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2">
                   <h4 className="text-3xl text-[#0b1c30] font-extrabold tracking-tight font-mono tabular-nums">
                     {(
                       peers.reduce((s, p) => s + (p.completed_topics / p.total_challenge_topics) * 100, 0) /
-                      peers.length
+                      (peers.length || 1)
                     ).toFixed(1)}%
                   </h4>
-                  <span className="text-xs text-[#404942]">Squad Average Completion</span>
+                  <span className="text-xs text-[#404942]">Average Group Progress</span>
                 </div>
                 <p className="text-xs text-[#404942]">
-                  Your squad is outperforming the Dhaka Regional Benchmark (62.8%) by 8.6 percentage points.
+                  Your study group is making steady progress through the syllabus.
                 </p>
               </div>
 
@@ -802,14 +817,14 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     style={{
                       width: `${(
                         peers.reduce((s, p) => s + (p.completed_topics / p.total_challenge_topics) * 100, 0) /
-                        peers.length
+                        (peers.length || 1)
                       ).toFixed(1)}%`,
                     }}
                   />
                 </div>
                 <div className="flex justify-between text-[10px] text-[#404942] font-mono">
                   <span>0%</span>
-                  <span>Benchmark: 62.8%</span>
+                  <span>Average Progress</span>
                   <span>100%</span>
                 </div>
               </div>
@@ -821,20 +836,20 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-[#003820] font-bold uppercase tracking-wider flex items-center gap-1 font-mono">
                     <span className="material-symbols-outlined text-sm">menu_book</span>
-                    Collective Mastery
+                    Total Completed
                   </span>
                   <span className="px-2 py-0.5 rounded bg-[#e5eeff] text-[#0b1c30] font-mono text-[10px] font-semibold">
-                    {peers.length} Squad Members
+                    {peers.length} Members
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2">
                   <h4 className="text-3xl text-[#003820] font-extrabold tracking-tight font-mono tabular-nums">
                     {peers.reduce((acc, p) => acc + p.completed_topics, 0)}
                   </h4>
-                  <span className="text-xs text-[#404942]">Topics Solved & Mastered</span>
+                  <span className="text-xs text-[#404942]">Topics Completed by Group</span>
                 </div>
                 <p className="text-xs text-[#404942]">
-                  Cumulative syllabus breakthroughs across Organic Chemistry, Vectors, Complex Numbers, and Dynamics.
+                  Topics completed across Physics, Chemistry, Math, and Biology.
                 </p>
               </div>
 
@@ -850,12 +865,12 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     EV
                   </div>
                   <div className="inline-block h-6 w-6 rounded-full bg-amber-700 text-white text-[10px] font-bold flex items-center justify-center">
-                    +15
+                    +{Math.max(1, peers.length)}
                   </div>
                 </div>
                 <span className="text-[11px] font-mono text-[#003820] font-semibold flex items-center gap-1">
                   <span className="material-symbols-outlined text-sm text-[#006c49]">star</span>
-                  96% Accuracy Rate
+                  Active Sprint
                 </span>
               </div>
             </div>

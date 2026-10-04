@@ -55,10 +55,10 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
             </div>
             <div>
               <h3 className="text-lg text-[#0b1c30] font-extrabold tracking-tight">
-                Sprint Successfully Launched!
+                Sprint Created Successfully
               </h3>
               <p className="text-xs text-[#006c49] font-medium">
-                Saved to Firestore <code className="font-mono bg-[#eff4ff] px-1 py-0.5 rounded text-[11px]">challenges</code> collection
+                Saved to your study account
               </p>
             </div>
           </div>
@@ -75,7 +75,7 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
           <div className="p-4 bg-gradient-to-r from-[#003820] to-[#005232] rounded-2xl text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
             <div>
               <span className="text-[10px] font-mono text-[#6ffbbe] uppercase tracking-wider font-bold block">
-                Challenge Room Code (Share with Friends)
+                Room Code (Share with Friends)
               </span>
               <span className="text-2xl font-black font-mono tracking-wider text-white">
                 {code}
@@ -96,7 +96,7 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
         {/* JSON Preview container */}
         <div className="flex flex-col gap-1.5 flex-1 overflow-hidden">
           <div className="flex items-center justify-between text-xs text-[#404942]">
-            <span className="font-semibold">Firestore Document Payload</span>
+            <span className="font-semibold">Sprint Details</span>
             <button
               onClick={handleCopy}
               className="text-[#006c49] hover:underline flex items-center gap-1 font-mono text-[11px] cursor-pointer"
@@ -104,7 +104,7 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
               <span className="material-symbols-outlined text-sm">
                 {copied ? 'done' : 'content_copy'}
               </span>
-              {copied ? 'Copied Payload!' : 'Copy JSON'}
+              {copied ? 'Copied Details!' : 'Copy JSON'}
             </button>
           </div>
 
@@ -115,7 +115,7 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
 
         <div className="flex flex-col sm:flex-row items-center justify-between pt-3 border-t border-[#e5eeff] gap-2">
           <span className="text-xs text-[#404942]">
-            Real-time <code className="font-mono text-[11px]">onSnapshot</code> listener is now active.
+            Your sprint is now active and ready.
           </span>
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             <button
@@ -128,7 +128,7 @@ export const StartChallengeModal: React.FC<StartChallengeModalProps> = ({
               onClick={handleGoDashboard}
               className="px-5 py-2 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
             >
-              Open Main Dashboard
+              Go to Dashboard
             </button>
           </div>
         </div>

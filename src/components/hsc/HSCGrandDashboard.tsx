@@ -41,7 +41,7 @@ export const HSCGrandDashboard: React.FC = () => {
                 cloud_sync
               </span>
               <span>
-                <strong>Shared Global Syllabus State:</strong> Any updates made to Theory or Practice in the <strong>Main Dashboard</strong> or in the accordion below are automatically aggregated here in real time.
+                <strong>Syllabus Sync:</strong> Progress updated in the dashboard or in the syllabus list below updates your overall progress automatically.
               </span>
             </div>
 
@@ -59,24 +59,24 @@ export const HSCGrandDashboard: React.FC = () => {
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2 text-xs text-[#404942]">
                 <Link to="/" className="hover:text-[#003820] transition-colors">
-                  Academics
+                  StudyTrack
                 </Link>
                 <span className="material-symbols-outlined text-xs text-[#c0c9c0]">
                   chevron_right
                 </span>
-                <span className="text-[#0b1c30] font-semibold">HSC Progress</span>
+                <span className="text-[#0b1c30] font-semibold">HSC Syllabus</span>
                 <span className="material-symbols-outlined text-xs text-[#c0c9c0]">
                   chevron_right
                 </span>
                 <span className="text-[#003820] font-semibold">
-                  Exam Mastery Matrix
+                  Full Curriculum
                 </span>
               </div>
               <h1 className="text-2xl sm:text-3xl text-[#0b1c30] font-bold tracking-tight">
-                HSC Grand Progress Dashboard
+                HSC Syllabus Progress
               </h1>
               <p className="text-xs text-[#404942]">
-                High-density syllabus tracking, predictive board examination readiness & drill verification.
+                Track your complete HSC syllabus across all subjects, chapters, and topics.
               </p>
             </div>
 
@@ -93,7 +93,7 @@ export const HSCGrandDashboard: React.FC = () => {
                 className="bg-[#003820] text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 hover:bg-[#0f5132] transition-colors shadow-xs cursor-pointer"
               >
                 <span className="material-symbols-outlined text-base">download</span>
-                <span>Export Matrix</span>
+                <span>Export Syllabus</span>
               </button>
             </div>
           </div>

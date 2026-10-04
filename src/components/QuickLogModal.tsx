@@ -51,7 +51,6 @@ export const QuickLogModal: React.FC<QuickLogModalProps> = ({
               <option value="Chemistry">Chemistry</option>
               <option value="Math">Math</option>
               <option value="Biology">Biology</option>
-              <option value="History">History</option>
             </select>
           </div>
 
@@ -71,7 +70,7 @@ export const QuickLogModal: React.FC<QuickLogModalProps> = ({
             <label className="block font-semibold text-[#0b1c30] mb-1">Session Notes</label>
             <textarea
               rows={3}
-              placeholder="Solved 15 textbook problems on momentum transfer..."
+              placeholder="Solved 15 problems on vectors and momentum..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30]"
@@ -90,7 +89,7 @@ export const QuickLogModal: React.FC<QuickLogModalProps> = ({
               type="submit"
               className="px-4 py-2 bg-[#003820] hover:bg-[#0f5132] text-white font-semibold rounded-xl"
             >
-              Confirm Log
+              Save Log
             </button>
           </div>
         </form>

@@ -76,6 +76,13 @@ service cloud.firestore {
       allow delete: if isValidId(subjectId) && isAdmin();
     }
 
+    // User progress persistence
+    match /user_progress/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow create, update: if isValidId(userId) && isOwner(userId);
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
     // Challenges collection (Real-time cohort sprint coordination)
     match /challenges/{challengeId} {
       allow get, list: if isSignedIn();

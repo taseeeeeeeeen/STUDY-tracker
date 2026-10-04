@@ -1,5 +1,15 @@
 import React, { useState } from 'react';
-import { Outlet, useLocation, Link, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, Link } from 'react-router-dom';
+import {
+  Flame,
+  Plus,
+  Zap,
+  Shield,
+  LayoutDashboard,
+  LogOut,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { useStudyTrack } from '../../context/StudyTrackContext';
 import { useAuth } from '../../context/AuthContext';
@@ -10,7 +20,6 @@ export const AppLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isQuickLogOpen, setIsQuickLogOpen] = useState(false);
   const [isStudyModeOpen, setIsStudyModeOpen] = useState(false);
-  const [themeDark, setThemeDark] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
   const {
@@ -24,7 +33,6 @@ export const AppLayout: React.FC = () => {
 
   const { user, isAdmin, logout } = useAuth();
   const location = useLocation();
-  const navigate = useNavigate();
 
   // Find active task for study mode
   const activeTask = tasks.find((t) => !t.isLocked && !(t.theoryCompleted && t.practiceCompleted));
@@ -33,15 +41,15 @@ export const AppLayout: React.FC = () => {
   const getBreadcrumb = () => {
     switch (location.pathname) {
       case '/hsc-progress':
-        return 'HSC Progress • Exam Mastery Matrix';
+        return 'HSC Progress • Complete Syllabus';
       case '/challenges':
-        return 'Challenges • 7-Day Sprint Setup Wizard';
+        return 'Challenges • Study Sprint Setup';
       case '/peer-arena':
-        return 'Peer Arena • Live Cohort Leaderboard';
+        return 'Peer Arena • Study Group';
       case '/admin-dashboard':
-        return 'Admin Console • Role-Based Access Control';
+        return 'Admin Console • User Management';
       default:
-        return 'Main Dashboard • Academic Rhythm';
+        return 'Dashboard • Today\'s Plan';
     }
   };
 
@@ -51,16 +59,14 @@ export const AppLayout: React.FC = () => {
       {toastMessage && (
         <div className="fixed top-20 right-6 z-50 p-4 rounded-xl shadow-xl bg-[#003820] text-white text-xs font-semibold flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4 border border-[#6ffbbe]/40 max-w-md">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-sm text-[#6ffbbe]">
-              sync
-            </span>
+            <RefreshCw className="w-3.5 h-3.5 text-[#6ffbbe] animate-spin" />
             <span>{toastMessage}</span>
           </div>
           <button
             onClick={clearToast}
             className="text-white/70 hover:text-white cursor-pointer"
           >
-            <span className="material-symbols-outlined text-sm">close</span>
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
@@ -96,11 +102,9 @@ export const AppLayout: React.FC = () => {
           <div className="flex items-center gap-3">
             {/* Streak Pill */}
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#6ffbbe]/25 text-[#003820] border border-[#6ffbbe]/80">
-              <span className="material-symbols-outlined text-base leading-none text-[#006c49]">
-                local_fire_department
-              </span>
+              <Flame className="w-4 h-4 text-[#006c49]" />
               <span className="text-xs font-semibold tabular-nums">
-                Streak: {streakDays} Days 🔥
+                Streak: {streakDays} Days
               </span>
             </div>
 
@@ -109,7 +113,7 @@ export const AppLayout: React.FC = () => {
               onClick={() => setIsQuickLogOpen(true)}
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#eff4ff] hover:bg-[#e5eeff] text-[#0b1c30] text-xs font-semibold border border-[#c0c9c0]/30 transition-colors cursor-pointer"
             >
-              <span className="material-symbols-outlined text-sm">add</span>
+              <Plus className="w-3.5 h-3.5" />
               <span>Quick Log</span>
             </button>
 
@@ -117,7 +121,7 @@ export const AppLayout: React.FC = () => {
               onClick={() => setIsStudyModeOpen(true)}
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-semibold transition-colors cursor-pointer"
             >
-              <span className="material-symbols-outlined text-sm text-[#6ffbbe]">bolt</span>
+              <Zap className="w-3.5 h-3.5 text-[#6ffbbe]" />
               <span>Study Mode</span>
             </button>
 
@@ -128,7 +132,7 @@ export const AppLayout: React.FC = () => {
                 className="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-xl bg-purple-100 text-purple-800 border border-purple-200 text-xs font-bold hover:bg-purple-200 transition-colors"
                 title="Go to Admin Console"
               >
-                <span className="material-symbols-outlined text-sm">admin_panel_settings</span>
+                <Shield className="w-3.5 h-3.5" />
                 <span>Admin</span>
               </Link>
             )}
@@ -187,9 +191,7 @@ export const AppLayout: React.FC = () => {
                           onClick={() => setProfileDropdownOpen(false)}
                           className="flex items-center gap-2.5 px-4 py-2 text-[#0b1c30] hover:bg-[#eff4ff] transition-colors"
                         >
-                          <span className="material-symbols-outlined text-base text-purple-700">
-                            admin_panel_settings
-                          </span>
+                          <Shield className="w-4 h-4 text-purple-700" />
                           <span>Admin Console</span>
                         </Link>
                       )}
@@ -199,9 +201,7 @@ export const AppLayout: React.FC = () => {
                         onClick={() => setProfileDropdownOpen(false)}
                         className="flex items-center gap-2.5 px-4 py-2 text-[#0b1c30] hover:bg-[#eff4ff] transition-colors"
                       >
-                        <span className="material-symbols-outlined text-base text-[#707971]">
-                          dashboard
-                        </span>
+                        <LayoutDashboard className="w-4 h-4 text-[#707971]" />
                         <span>Main Dashboard</span>
                       </Link>
 
@@ -212,9 +212,7 @@ export const AppLayout: React.FC = () => {
                         }}
                         className="w-full flex items-center gap-2.5 px-4 py-2 text-red-600 hover:bg-red-50 transition-colors text-left cursor-pointer"
                       >
-                        <span className="material-symbols-outlined text-base">
-                          logout
-                        </span>
+                        <LogOut className="w-4 h-4" />
                         <span>Sign Out</span>
                       </button>
                     </div>
@@ -235,10 +233,10 @@ export const AppLayout: React.FC = () => {
           <div className="max-w-[1440px] mx-auto px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#404942]">
             <div className="flex items-center gap-2">
               <span className="font-bold text-[#003820] text-sm">StudyTrack</span>
-              <span>— Master your academic rhythm</span>
+              <span>— HSC Study Tracker</span>
             </div>
             <p className="text-[11px] text-[#707971]">
-              © 2026 StudyTrack. Firebase Auth & Role-Based Access Control.
+              © 2026 StudyTrack. Built for HSC Students.
             </p>
           </div>
         </footer>

@@ -17,6 +17,11 @@ export const AdminDashboardPage: React.FC = () => {
 
   // Real-time listener for Firestore `users` collection
   useEffect(() => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      setLoadingUsers(false);
+      return;
+    }
+
     const usersColRef = collection(db, 'users');
     const unsubscribe = onSnapshot(
       usersColRef,
@@ -35,7 +40,7 @@ export const AdminDashboardPage: React.FC = () => {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [currentUser]);
 
   // Update user role in Firestore
   const handleRoleChange = async (targetUser: AppUser, newRole: UserRole) => {
@@ -74,15 +79,15 @@ export const AdminDashboardPage: React.FC = () => {
           <div className="flex items-center gap-2 mb-1.5">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-100 text-purple-800 border border-purple-200 uppercase tracking-wider flex items-center gap-1">
               <span className="material-symbols-outlined text-xs">admin_panel_settings</span>
-              Restricted Area • Admin Only
+              Admin Console
             </span>
-            <span className="text-xs text-[#707971]">Zero-Trust Firestore Security</span>
+            <span className="text-xs text-[#707971]">User & Syllabus Management</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-[#003820] tracking-tight">
-            System Administration & Master Syllabus Console
+            Admin Dashboard
           </h1>
           <p className="text-xs text-[#404942] mt-1 max-w-2xl">
-            Manage authenticated student accounts, toggle permissions, and CRUD the official HSC Master Syllabus stored in Firestore.
+            Manage student accounts, update user roles, and edit the official HSC syllabus.
           </p>
         </div>
 
@@ -122,7 +127,7 @@ export const AdminDashboardPage: React.FC = () => {
           }`}
         >
           <span className="material-symbols-outlined text-base">group</span>
-          <span>Section 1: User Management</span>
+          <span>Users</span>
           <span
             className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
               activeSection === 'users'
@@ -143,7 +148,7 @@ export const AdminDashboardPage: React.FC = () => {
           }`}
         >
           <span className="material-symbols-outlined text-base">menu_book</span>
-          <span>Section 2: Syllabus Management (CRUD)</span>
+          <span>Syllabus Editor</span>
           <span
             className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
               activeSection === 'syllabus'
@@ -151,7 +156,7 @@ export const AdminDashboardPage: React.FC = () => {
                 : 'bg-[#eff4ff] text-[#003820]'
             }`}
           >
-            Firestore
+            HSC
           </span>
         </button>
       </div>
@@ -187,7 +192,7 @@ export const AdminDashboardPage: React.FC = () => {
                 </div>
                 <span className="text-[10px] text-[#006c49] font-medium flex items-center gap-1">
                   <span className="material-symbols-outlined text-xs">cloud_done</span>
-                  Synced from Firestore /users
+                  Registered users
                 </span>
               </div>
               <div className="w-12 h-12 rounded-xl bg-[#eff4ff] text-[#003820] flex items-center justify-center">
@@ -204,7 +209,7 @@ export const AdminDashboardPage: React.FC = () => {
                   {loadingUsers ? '...' : totalAdmins}
                 </div>
                 <span className="text-[10px] text-purple-600 font-medium">
-                  Elevated Permissions
+                  Admin access
                 </span>
               </div>
               <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center">
@@ -220,7 +225,7 @@ export const AdminDashboardPage: React.FC = () => {
                 <div className="text-2xl font-black text-[#003820] tabular-nums">
                   {loadingUsers ? '...' : totalStandardUsers}
                 </div>
-                <span className="text-[10px] text-[#707971]">Academic Scholars</span>
+                <span className="text-[10px] text-[#707971]">Student accounts</span>
               </div>
               <div className="w-12 h-12 rounded-xl bg-[#6ffbbe]/20 text-[#003820] flex items-center justify-center">
                 <span className="material-symbols-outlined text-2xl">school</span>
@@ -230,14 +235,14 @@ export const AdminDashboardPage: React.FC = () => {
             <div className="p-5 rounded-2xl bg-white border border-[#c0c9c0]/30 shadow-xs flex items-center justify-between">
               <div className="space-y-1 overflow-hidden">
                 <span className="text-[11px] font-mono uppercase font-bold text-[#707971]">
-                  Auto-Admin Email
+                  Primary Admin
                 </span>
-                <div className="text-xs font-mono font-bold text-[#0b1c30] truncate">
-                  {ADMIN_EMAILS[0]}
+                <div className="text-xs font-mono font-bold text-[#003820] truncate">
+                  Configured & Active
                 </div>
                 <span className="text-[10px] text-[#006c49] font-medium flex items-center gap-1">
-                  <span className="material-symbols-outlined text-xs">auto_awesome</span>
-                  Auto-Elevated on Sign-In
+                  <span className="material-symbols-outlined text-xs">verified_user</span>
+                  Root admin verified
                 </span>
               </div>
               <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
@@ -251,10 +256,10 @@ export const AdminDashboardPage: React.FC = () => {
             <div className="p-6 border-b border-[#c0c9c0]/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-bold text-[#003820] tracking-tight">
-                  User Directory & Role Management
+                  User Directory
                 </h2>
                 <p className="text-xs text-[#707971]">
-                  Live records from <code className="font-mono text-[#003820]">/users</code> collection
+                  All registered student and admin accounts
                 </p>
               </div>
 
@@ -325,7 +330,7 @@ export const AdminDashboardPage: React.FC = () => {
                       <td colSpan={6} className="px-6 py-12 text-center text-[#707971]">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <div className="w-5 h-5 border-2 border-[#003820] border-t-transparent rounded-full animate-spin" />
-                          <span>Loading Firestore User Records...</span>
+                          <span>Loading user accounts...</span>
                         </div>
                       </td>
                     </tr>
@@ -335,7 +340,7 @@ export const AdminDashboardPage: React.FC = () => {
                         <span className="material-symbols-outlined text-3xl mb-1 text-[#c0c9c0]">
                           person_search
                         </span>
-                        <p className="font-semibold text-xs">No matching user records found</p>
+                        <p className="font-semibold text-xs">No users found</p>
                       </td>
                     </tr>
                   ) : (
@@ -362,7 +367,7 @@ export const AdminDashboardPage: React.FC = () => {
                               </div>
                               <div>
                                 <div className="font-bold text-[#0b1c30] flex items-center gap-1.5">
-                                  <span>{u.name || 'Unnamed Scholar'}</span>
+                                  <span>{u.name || 'Unnamed User'}</span>
                                   {isCurrent && (
                                     <span className="px-1.5 py-0.2 rounded bg-[#6ffbbe]/30 text-[#003820] text-[9px] font-mono font-bold">
                                       YOU
@@ -424,7 +429,7 @@ export const AdminDashboardPage: React.FC = () => {
                                   disabled={updatingUid === u.uid}
                                   className="px-3 py-1.5 rounded-xl bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 font-bold text-[11px] transition-colors cursor-pointer disabled:opacity-50"
                                 >
-                                  {updatingUid === u.uid ? 'Updating...' : 'Promote to Admin'}
+                                  {updatingUid === u.uid ? 'Updating...' : 'Make Admin'}
                                 </button>
                               ) : (
                                 <button
@@ -437,7 +442,7 @@ export const AdminDashboardPage: React.FC = () => {
                                   }
                                   className="px-3 py-1.5 rounded-xl bg-gray-100 text-[#404942] hover:bg-gray-200 border border-gray-200 font-bold text-[11px] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  {updatingUid === u.uid ? 'Updating...' : 'Demote to User'}
+                                  {updatingUid === u.uid ? 'Updating...' : 'Make User'}
                                 </button>
                               )}
                             </div>

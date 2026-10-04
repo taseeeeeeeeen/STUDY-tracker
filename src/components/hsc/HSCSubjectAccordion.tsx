@@ -96,13 +96,13 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <span className="text-[11px] text-[#006c49] font-semibold uppercase tracking-wider font-mono">
-            Granular Breakdown
+            Subject Breakdown
           </span>
           <h2 className="text-xl text-[#0b1c30] font-bold tracking-tight">
-            HSC Paper-wise Mastery Matrix
+            HSC Subject Papers
           </h2>
           <p className="text-xs text-[#404942]">
-            Inspect theory coverage, test question volume, and unit status for every syllabus module.
+            View theory progress, practice questions, and chapters for each subject.
           </p>
         </div>
 
@@ -157,7 +157,7 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
               className="bg-transparent text-[#0b1c30] font-bold focus:outline-none cursor-pointer"
             >
               <option value="completion">Completion %</option>
-              <option value="weightage">Syllabus Weightage</option>
+              <option value="weightage">Marks / Weight</option>
               <option value="pending">Pending Chapters</option>
             </select>
           </div>

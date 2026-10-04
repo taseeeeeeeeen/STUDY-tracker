@@ -8,8 +8,9 @@ import {
   query,
   where,
   onSnapshot,
+  runTransaction,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import {
   FirestoreChallenge,
   ChallengeParticipant,
@@ -18,11 +19,11 @@ import {
 
 const COLLECTION_NAME = 'challenges';
 
-// Generate 6-char alphanumeric code like CH-9A2X
+// Generate 6-char alphanumeric code like CH-9A2X7B
 export function generateChallengeCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let rand = '';
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     rand += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return `CH-${rand}`;
@@ -37,7 +38,24 @@ export async function createFirestoreChallenge(
   const challengeId =
     challenge.challenge_id ||
     `ch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const code = challenge.code || generateChallengeCode();
+
+  // Generate a unique code if one isn't provided
+  let code = challenge.code;
+  if (!code) {
+    let isUnique = false;
+    let attempts = 0;
+    while (!isUnique && attempts < 5) {
+      const candidate = generateChallengeCode();
+      const existing = await findChallengeByCode(candidate);
+      if (!existing) {
+        code = candidate;
+        isUnique = true;
+      }
+      attempts++;
+    }
+    // Fallback if somehow collisions persist
+    if (!code) code = generateChallengeCode();
+  }
 
   const finalPayload: FirestoreChallenge = {
     ...challenge,
@@ -59,6 +77,11 @@ export function subscribeChallenge(
   onData: (challenge: FirestoreChallenge | null) => void,
   onError?: (err: unknown) => void
 ) {
+  if (!auth.currentUser) {
+    onData(null);
+    return () => {};
+  }
+
   return onSnapshot(
     doc(db, COLLECTION_NAME, challengeId),
     (snap) => {
@@ -78,6 +101,7 @@ export function subscribeChallenge(
 export async function findChallengeByCode(
   code: string
 ): Promise<FirestoreChallenge | null> {
+  if (!auth.currentUser) return null;
   const cleanCode = code.toUpperCase().trim();
   try {
     const q = query(
@@ -155,60 +179,62 @@ export async function toggleTopicProgressInChallenge(
 ): Promise<void> {
   const challengeRef = doc(db, COLLECTION_NAME, challengeId);
   try {
-    const snap = await getDoc(challengeRef);
-    if (!snap.exists()) return;
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(challengeRef);
+      if (!snap.exists()) return;
 
-    const challengeData = snap.data() as FirestoreChallenge;
-    const participants = [...challengeData.participants];
-    let participantIndex = participants.findIndex((p) => p.uid === uid);
+      const challengeData = snap.data() as FirestoreChallenge;
+      const participants = [...challengeData.participants];
+      let participantIndex = participants.findIndex((p) => p.uid === uid);
 
-    if (participantIndex === -1) {
-      // If user wasn't registered in participants array yet, create initial entry
-      const initialProgress: Record<string, ParticipantTopicProgress> = {};
-      challengeData.selected_syllabus.forEach((top) => {
-        initialProgress[top.id] = { theory: false, practice: false };
+      if (participantIndex === -1) {
+        // If user wasn't registered in participants array yet, create initial entry
+        const initialProgress: Record<string, ParticipantTopicProgress> = {};
+        challengeData.selected_syllabus.forEach((top) => {
+          initialProgress[top.id] = { theory: false, practice: false };
+        });
+
+        const newPart: ChallengeParticipant = {
+          uid,
+          name: 'Student',
+          completed_topics: 0,
+          total_challenge_topics: challengeData.selected_syllabus.length,
+          last_completion_timestamp: Date.now(),
+          topic_progress: initialProgress,
+          joined_at: new Date().toISOString(),
+        };
+        participants.push(newPart);
+        participantIndex = participants.length - 1;
+      }
+
+      const participant = { ...participants[participantIndex] };
+      const currentProgress = { ...(participant.topic_progress || {}) };
+      const topicState = currentProgress[topicId] || { theory: false, practice: false };
+
+      // Toggle target state
+      const nextState = {
+        ...topicState,
+        [type]: !topicState[type],
+      };
+      currentProgress[topicId] = nextState;
+      participant.topic_progress = currentProgress;
+
+      // Recalculate completed topics count
+      // Each topic has weight 2: Theory = 1 pt, Practice = 1 pt (Total 2 pts)
+      let totalPoints = 0;
+      Object.values(currentProgress).forEach((prog) => {
+        if (prog.theory) totalPoints += 1;
+        if (prog.practice) totalPoints += 1;
       });
 
-      const newPart: ChallengeParticipant = {
-        uid,
-        name: 'Scholar',
-        completed_topics: 0,
-        total_challenge_topics: challengeData.selected_syllabus.length,
-        last_completion_timestamp: Date.now(),
-        topic_progress: initialProgress,
-        joined_at: new Date().toISOString(),
-      };
-      participants.push(newPart);
-      participantIndex = participants.length - 1;
-    }
+      participant.completed_topics = totalPoints / 2;
+      participant.last_completion_timestamp = Date.now();
+      participants[participantIndex] = participant;
 
-    const participant = { ...participants[participantIndex] };
-    const currentProgress = { ...(participant.topic_progress || {}) };
-    const topicState = currentProgress[topicId] || { theory: false, practice: false };
-
-    // Toggle target state
-    const nextState = {
-      ...topicState,
-      [type]: !topicState[type],
-    };
-    currentProgress[topicId] = nextState;
-    participant.topic_progress = currentProgress;
-
-    // Recalculate completed topics count
-    // Each topic has weight 2: Theory = 1 pt, Practice = 1 pt (Total 2 pts)
-    let totalPoints = 0;
-    Object.values(currentProgress).forEach((prog) => {
-      if (prog.theory) totalPoints += 1;
-      if (prog.practice) totalPoints += 1;
-    });
-
-    participant.completed_topics = totalPoints / 2;
-    participant.last_completion_timestamp = Date.now();
-    participants[participantIndex] = participant;
-
-    await updateDoc(challengeRef, {
-      participants,
-      updatedAt: new Date().toISOString(),
+      transaction.update(challengeRef, {
+        participants,
+        updatedAt: new Date().toISOString(),
+      });
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);

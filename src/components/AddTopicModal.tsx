@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SubjectType, Task } from '../types/dashboard';
+import { MasterSubject, SyllabusChapter, SyllabusTopic } from '../types/syllabus';
+import { subscribeMasterSyllabus } from '../services/syllabusService';
+import { DEFAULT_HSC_SYLLABUS } from '../data/defaultSyllabusSeed';
+import { useAuth } from '../context/AuthContext';
 
 interface AddTopicModalProps {
   isOpen: boolean;
@@ -12,14 +16,109 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
   onClose,
   onAddTask,
 }) => {
+  const { user } = useAuth();
+  const [masterSubjects, setMasterSubjects] = useState<MasterSubject[]>(DEFAULT_HSC_SYLLABUS);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
+  const [selectedChapterId, setSelectedChapterId] = useState<string>('');
+  const [selectedTopicId, setSelectedTopicId] = useState<string>('');
+
   const [title, setTitle] = useState('');
   const [subject, setSubject] = useState<SubjectType>('Physics');
   const [duration, setDuration] = useState(45);
   const [description, setDescription] = useState('');
   const [isPriority, setIsPriority] = useState(false);
-  const [creationAge, setCreationAge] = useState<number>(0); // 0 = now, 25 = 25h ago (testing auto-lock)
+  const [creationAge, setCreationAge] = useState<number>(0);
+
+  useEffect(() => {
+    if (!isOpen || !user) return;
+    const unsub = subscribeMasterSyllabus((subs) => {
+      if (subs && subs.length > 0) {
+        setMasterSubjects(subs);
+      }
+    });
+    return () => unsub();
+  }, [isOpen, user]);
+
+  // Initialize selected subject/chapter/topic when modal opens or subjects load
+  useEffect(() => {
+    if (isOpen && masterSubjects.length > 0) {
+      const initialSub = masterSubjects[0];
+      setSelectedSubjectId(initialSub.id);
+
+      const initialCh = initialSub.chapters?.[0];
+      if (initialCh) {
+        setSelectedChapterId(initialCh.id);
+        const initialTop = initialCh.topics?.[0];
+        if (initialTop) {
+          setSelectedTopicId(initialTop.id);
+          applyTopicData(initialSub, initialCh, initialTop);
+        }
+      }
+    }
+  }, [isOpen, masterSubjects]);
+
+  const mapSubjectNameToType = (subName: string): SubjectType => {
+    if (subName.includes('Physics') || subName.includes('ফিজিক্স')) return 'Physics';
+    if (subName.includes('Chemistry') || subName.includes('কেমিস্ট্রি')) return 'Chemistry';
+    if (subName.includes('Math') || subName.includes('ম্যাথ') || subName.includes('গণিত')) return 'Math';
+    if (subName.includes('Biology') || subName.includes('জীব')) return 'Biology';
+    return 'Physics';
+  };
+
+  const applyTopicData = (sub: MasterSubject, ch: SyllabusChapter, top: SyllabusTopic) => {
+    setTitle(top.title);
+    setSubject(mapSubjectNameToType(sub.name));
+    setDuration(top.durationMinutes || 45);
+    setDescription(top.subconcept || `${sub.name} • ${ch.name}`);
+  };
+
+  const handleSubjectChange = (subId: string) => {
+    setSelectedSubjectId(subId);
+    const targetSub = masterSubjects.find((s) => s.id === subId);
+    if (targetSub && targetSub.chapters.length > 0) {
+      const firstCh = targetSub.chapters[0];
+      setSelectedChapterId(firstCh.id);
+      if (firstCh.topics.length > 0) {
+        const firstTop = firstCh.topics[0];
+        setSelectedTopicId(firstTop.id);
+        applyTopicData(targetSub, firstCh, firstTop);
+      }
+    }
+  };
+
+  const handleChapterChange = (chId: string) => {
+    setSelectedChapterId(chId);
+    const targetSub = masterSubjects.find((s) => s.id === selectedSubjectId);
+    if (targetSub) {
+      const targetCh = targetSub.chapters.find((c) => c.id === chId);
+      if (targetCh && targetCh.topics.length > 0) {
+        const firstTop = targetCh.topics[0];
+        setSelectedTopicId(firstTop.id);
+        applyTopicData(targetSub, targetCh, firstTop);
+      }
+    }
+  };
+
+  const handleTopicChange = (topId: string) => {
+    setSelectedTopicId(topId);
+    const targetSub = masterSubjects.find((s) => s.id === selectedSubjectId);
+    if (targetSub) {
+      const targetCh = targetSub.chapters.find((c) => c.id === selectedChapterId);
+      if (targetCh) {
+        const targetTop = targetCh.topics.find((t) => t.id === topId);
+        if (targetTop) {
+          applyTopicData(targetSub, targetCh, targetTop);
+        }
+      }
+    }
+  };
 
   if (!isOpen) return null;
+
+  const currentSub = masterSubjects.find((s) => s.id === selectedSubjectId) || masterSubjects[0];
+  const currentChapters = currentSub?.chapters || [];
+  const currentCh = currentChapters.find((c) => c.id === selectedChapterId) || currentChapters[0];
+  const currentTopics = currentCh?.topics || [];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +130,7 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
       title: title.trim(),
       subject,
       durationMinutes: Number(duration),
-      description: description.trim() || `${subject} comprehensive study module`,
+      description: description.trim() || `${subject} syllabus session`,
       theoryCompleted: false,
       practiceCompleted: false,
       createdAt,
@@ -42,8 +141,6 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
           : undefined,
     });
 
-    setTitle('');
-    setDescription('');
     onClose();
   };
 
@@ -55,7 +152,10 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
             <div className="w-8 h-8 rounded-lg bg-[#eff4ff] flex items-center justify-center text-[#003820]">
               <span className="material-symbols-outlined text-lg">add_task</span>
             </div>
-            <h3 className="text-base font-bold text-[#0b1c30]">Add New Study Topic</h3>
+            <div>
+              <h3 className="text-base font-bold text-[#0b1c30]">Select Study Topic</h3>
+              <span className="text-[10px] text-[#006c49] font-mono">From Global Master Syllabus</span>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -66,34 +166,55 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div>
-            <label className="block font-semibold text-[#0b1c30] mb-1">Topic Title *</label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. Thermodynamics & Heat Transfer"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          {/* Syllabus Cascading Selectors */}
+          <div className="space-y-3 p-3 bg-[#f8f9ff] rounded-xl border border-[#c0c9c0]/30">
             <div>
-              <label className="block font-semibold text-[#0b1c30] mb-1">Subject</label>
+              <label className="block font-semibold text-[#0b1c30] mb-1">1. Master Subject</label>
               <select
-                value={subject}
-                onChange={(e) => setSubject(e.target.value as SubjectType)}
+                value={selectedSubjectId}
+                onChange={(e) => handleSubjectChange(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
               >
-                <option value="Physics">Physics</option>
-                <option value="Chemistry">Chemistry</option>
-                <option value="Math">Math</option>
-                <option value="Biology">Biology</option>
-                <option value="History">History</option>
+                {masterSubjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.code})
+                  </option>
+                ))}
               </select>
             </div>
 
+            <div>
+              <label className="block font-semibold text-[#0b1c30] mb-1">2. Chapter</label>
+              <select
+                value={selectedChapterId}
+                onChange={(e) => handleChapterChange(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
+              >
+                {currentChapters.map((ch) => (
+                  <option key={ch.id} value={ch.id}>
+                    {ch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-[#0b1c30] mb-1">3. Topic</label>
+              <select
+                value={selectedTopicId}
+                onChange={(e) => handleTopicChange(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
+              >
+                {currentTopics.map((top) => (
+                  <option key={top.id} value={top.id}>
+                    {top.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-semibold text-[#0b1c30] mb-1">Duration (min)</label>
               <input
@@ -105,36 +226,32 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
                 className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
               />
             </div>
+
+            <div>
+              <label className="block font-semibold text-[#0b1c30] mb-1">
+                Schedule Time
+              </label>
+              <select
+                value={creationAge}
+                onChange={(e) => setCreationAge(Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
+              >
+                <option value={0}>Today (Active)</option>
+                <option value={6}>6 hours ago (Active)</option>
+                <option value={23}>23 hours ago (Expiring soon)</option>
+                <option value={25}>Yesterday (Locked after 24 hours)</option>
+              </select>
+            </div>
           </div>
 
           <div>
-            <label className="block font-semibold text-[#0b1c30] mb-1">Key Sub-concepts</label>
+            <label className="block font-semibold text-[#0b1c30] mb-1">Sub-concept / Summary</label>
             <input
               type="text"
-              placeholder="e.g. Carnot engine, enthalpy, entropy calculations"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
             />
-          </div>
-
-          <div>
-            <label className="block font-semibold text-[#0b1c30] mb-1">
-              Creation Timestamp (Test 24h Lock Logic)
-            </label>
-            <select
-              value={creationAge}
-              onChange={(e) => setCreationAge(Number(e.target.value))}
-              className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]"
-            >
-              <option value={0}>Created Just Now (Active, Unlocked)</option>
-              <option value={6}>Created 6 hours ago (Active, Unlocked)</option>
-              <option value={23}>Created 23 hours ago (Expiring in 1 hour)</option>
-              <option value={25}>Created 25 hours ago (&gt; 24h: Auto-Locked!)</option>
-            </select>
-            <p className="text-[11px] text-[#707971] mt-1">
-              Select 25h to verify that tasks exceeding 24 hours render in the locked state.
-            </p>
           </div>
 
           <div className="flex items-center gap-2 pt-1">
@@ -154,15 +271,15 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-[#404942] hover:bg-[#eff4ff] font-medium transition-colors"
+              className="px-4 py-2 rounded-xl text-[#404942] hover:bg-[#eff4ff] font-medium transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-[#003820] hover:bg-[#0f5132] text-white font-semibold rounded-xl shadow-xs transition-colors"
+              className="px-4 py-2 bg-[#003820] hover:bg-[#0f5132] text-white font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
             >
-              Save Topic
+              Add to Plan
             </button>
           </div>
         </form>

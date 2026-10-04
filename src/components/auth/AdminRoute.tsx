@@ -1,7 +1,6 @@
 import React from 'react';
 import { Navigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { ADMIN_EMAILS } from '../../firebase';
 
 interface AdminRouteProps {
   children?: React.ReactNode;
@@ -74,7 +73,7 @@ export const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
               <span className="material-symbols-outlined text-sm">info</span>
               Admin Account Requirement
             </span>
-            Only designated administrator emails (such as <code className="font-mono font-semibold">{ADMIN_EMAILS[0]}</code>) or accounts elevated in Firestore can access this panel.
+            Only designated administrator accounts or users with elevated admin roles can access this panel.
           </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">

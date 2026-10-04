@@ -46,7 +46,7 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-[#404942]">
-              Formula: ({completedUnits} units / {totalUnits} max weight) × 100
+              {completedUnits} of {totalUnits} study units completed
             </p>
           </div>
 

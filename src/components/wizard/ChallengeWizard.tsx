@@ -64,8 +64,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Start Challenge Modal & Saving state
   const [isCreatingChallenge, setIsCreatingChallenge] = useState(false);
+  const [isChallengeSaved, setIsChallengeSaved] = useState(false);
   const [challengePayload, setChallengePayload] = useState<Record<string, unknown> | null>(null);
   const [isStartModalOpen, setIsStartModalOpen] = useState(false);
+
+  const isBoardLocked = !isChallengeSaved;
 
   // Toast alert
   const [toastMessage, setToastMessage] = useState<{
@@ -90,6 +93,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // REQUIREMENT 3: Fetch syllabus directly from `master_syllabus` Firestore collection
   useEffect(() => {
+    if (!user) return;
+
     const unsubscribe = subscribeMasterSyllabus(
       (subjects) => {
         setMasterSubjects(subjects);
@@ -130,7 +135,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   // Update DnD board cards whenever selected syllabus changes
   useEffect(() => {
@@ -174,6 +179,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // DnD Handlers
   const handleDragStart = (event: DragStartEvent) => {
+    if (isBoardLocked) return;
     const cardData = event.active.data.current?.card as BoardCard | undefined;
     if (cardData) {
       setActiveCard(cardData);
@@ -181,6 +187,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
+    if (isBoardLocked) return;
     const { active, over } = event;
     setActiveCard(null);
 
@@ -199,7 +206,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     // VALIDATION 1: Prevent dropping ANY card into a past column
     if (targetDay < currentDay) {
       showToast(
-        `⛔ Time Travel Prevented! Day ${targetDay} is in the past. Cards cannot be rescheduled to past dates.`,
+        `Day ${targetDay} is in the past, so you cannot schedule topics there.`,
         'error'
       );
       return;
@@ -208,12 +215,12 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     // VALIDATION 2: Allow dragging an unfinished card from past into future
     if (originalDay < currentDay) {
       showToast(
-        `✓ Rescheduled backlog: Moved "${draggedCard.title}" from Day ${originalDay} to Day ${targetDay}.`,
+        `Moved "${draggedCard.title}" from Day ${originalDay} to Day ${targetDay}.`,
         'success'
       );
     } else {
       showToast(
-        `✓ Reallocated: Moved "${draggedCard.title}" to Day ${targetDay}.`,
+        `Moved "${draggedCard.title}" to Day ${targetDay}.`,
         'info'
       );
     }
@@ -225,6 +232,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Topic Shift Modal Logic
   const handleCardClick = (card: BoardCard) => {
+    if (isBoardLocked) {
+      showToast('Please save the challenge first to unlock schedule changes.', 'info');
+      return;
+    }
     setShiftModalCard(card);
     setIsShiftModalOpen(true);
   };
@@ -234,7 +245,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     if (targetDay < currentDay) {
       showToast(
-        `⛔ Invalid Day: Cannot move topic to past Day ${targetDay}.`,
+        `Cannot move topics to past days.`,
         'error'
       );
       return;
@@ -245,7 +256,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     );
 
     showToast(
-      `✓ Successfully shifted "${shiftModalCard.title}" to Day ${targetDay}.`,
+      `Moved "${shiftModalCard.title}" to Day ${targetDay}.`,
       'success'
     );
     setIsShiftModalOpen(false);
@@ -254,6 +265,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Auto-balance workload helper
   const handleAutoBalance = () => {
+    if (isBoardLocked) {
+      showToast('Please save the challenge first to unlock day balancing.', 'info');
+      return;
+    }
     const futureCols = columns.filter((c) => c.dayNumber >= currentDay);
     if (futureCols.length === 0) return;
 
@@ -265,7 +280,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       })
     );
 
-    showToast('Auto-balanced workload evenly across upcoming days.', 'success');
+    showToast('Workload distributed evenly across upcoming days.', 'success');
   };
 
   // REQUIREMENT 1: Challenge Saving Logic directly to Firestore `challenges` collection
@@ -333,15 +348,9 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     try {
       const savedChallenge = await createFirestoreChallenge(structuredPayload);
 
-      // Console.log the final structured JSON object as explicitly required
-      console.log(
-        '%c=== START CHALLENGE: FINAL STRUCTURED FIRESTORE OBJECT ===',
-        'color: #006c49; font-size: 14px; font-weight: bold;'
-      );
-      console.log(savedChallenge);
-
       // Set as active challenge in global app context
       setActiveChallenge(savedChallenge);
+      setIsChallengeSaved(true);
 
       setChallengePayload({
         ...savedChallenge,
@@ -349,7 +358,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         totalEstimatedHours,
       });
       setIsStartModalOpen(true);
-      showToast('Challenge created and saved to Firestore!', 'success');
+      showToast('Challenge created and saved to Firestore! Schedule board is now unlocked.', 'success');
     } catch (error) {
       console.error('Failed to save challenge to Firestore:', error);
       showToast('Failed to save challenge to cloud database.', 'error');
@@ -435,14 +444,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                   Dashboard
                 </Link>
                 <span>/</span>
-                <span className="font-semibold text-[#003820]">Challenge Setup Wizard</span>
+                <span className="font-semibold text-[#003820]">Sprint Setup</span>
                 <span>/</span>
                 <span className="px-2 py-0.5 rounded-full bg-[#eff4ff] text-[#003820] text-[10px] font-mono font-bold">
-                  Firestore Master Syllabus Synced
+                  HSC Syllabus
                 </span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-black text-[#003820] tracking-tight">
-                Sprint Configuration & Workload Distribution
+                Create Study Sprint
               </h1>
             </div>
 
@@ -454,7 +463,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 </span>
                 <div className="flex flex-col text-left">
                   <span className="font-semibold text-[11px]">Duration</span>
-                  <span className="text-[10px] text-[#707971] font-mono">{duration}-Day Sprint</span>
+                  <span className="text-[10px] text-[#707971] font-mono">{duration} Days</span>
                 </div>
                 <span className="material-symbols-outlined text-[#003820] text-sm font-bold">check</span>
               </div>
@@ -465,7 +474,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                   2
                 </span>
                 <div className="flex flex-col text-left">
-                  <span className="font-semibold text-[11px]">Syllabus</span>
+                  <span className="font-semibold text-[11px]">Topics</span>
                   <span className="text-[10px] text-[#707971] font-mono">
                     {selectedSyllabusCount} Selected
                   </span>
@@ -479,8 +488,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                   3
                 </span>
                 <div className="flex flex-col text-left">
-                  <span className="font-semibold text-[11px]">Distribution</span>
-                  <span className="text-[10px] text-[#6ffbbe] font-mono">Interactive Board</span>
+                  <span className="font-semibold text-[11px]">Schedule</span>
+                  <span className="text-[10px] text-[#6ffbbe] font-mono">Daily Plan</span>
                 </div>
                 <span className="material-symbols-outlined text-[#6ffbbe] text-sm">edit_calendar</span>
               </div>
@@ -500,11 +509,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
               </span>
               <div>
                 <h2 className="text-lg font-bold text-[#0b1c30]">Select Sprint Duration</h2>
-                <p className="text-xs text-[#404942]">Choose operational intensity for your study goals.</p>
+                <p className="text-xs text-[#404942]">Choose how long you want this sprint to run.</p>
               </div>
             </div>
             <span className="px-3 py-1 rounded-full bg-[#6ffbbe]/30 text-[#003820] text-xs font-semibold">
-              High-Velocity Preset
+              Recommended: 7 Days
             </span>
           </div>
 
@@ -524,12 +533,12 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 <div>
                   <h3 className="text-base text-[#0b1c30] font-bold">Weekly Sprint</h3>
                   <span className="text-xs text-blue-700 font-semibold uppercase">
-                    7-Day High Intensity
+                    7 Days
                   </span>
                 </div>
               </div>
               <p className="text-xs text-[#404942]">
-                Focused sprint designed for rapid chapter coverage, mock test prep, and tight deadlines.
+                Best for focused chapter revision and exam prep over 1 week.
               </p>
             </div>
 
@@ -546,14 +555,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                   <span className="material-symbols-outlined text-2xl">event_repeat</span>
                 </div>
                 <div>
-                  <h3 className="text-base text-[#0b1c30] font-bold">Monthly Marathon</h3>
+                  <h3 className="text-base text-[#0b1c30] font-bold">Monthly Sprint</h3>
                   <span className="text-xs text-[#404942] font-semibold uppercase">
-                    30-Day Curriculum Coverage
+                    30 Days
                   </span>
                 </div>
               </div>
               <p className="text-xs text-[#404942]">
-                Steady comprehensive textbook pacing with built-in spaced repetition intervals.
+                Covers full chapters and problem sets with steady daily pacing.
               </p>
             </div>
           </div>
@@ -567,9 +576,9 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 02
               </span>
               <div>
-                <h2 className="text-lg font-bold text-[#0b1c30]">Curate Syllabus Topics</h2>
+                <h2 className="text-lg font-bold text-[#0b1c30]">Choose Topics</h2>
                 <p className="text-xs text-[#404942]">
-                  Select topics from the official Firestore Master Syllabus configured by Administrators. Normal users cannot modify the curriculum.
+                  Pick the HSC chapters and topics you want to include in this sprint.
                 </p>
               </div>
             </div>
@@ -577,7 +586,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
             <div className="flex items-center gap-3">
               <span className="text-xs text-[#404942] font-semibold pr-2">
                 {selectedSyllabusCount} topics selected •{' '}
-                <strong className="text-[#003820]">~{selectedSyllabusHours} hrs study load</strong>
+                <strong className="text-[#003820]">~{selectedSyllabusHours} hours total</strong>
               </span>
               <button
                 onClick={handleSelectAllCore}
@@ -701,10 +710,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
               </span>
               <div>
                 <h2 className="text-lg font-bold text-[#0b1c30]">
-                  Distribute Workload Across Days (Drag & Drop)
+                  Plan Your Schedule (Drag & Drop)
                 </h2>
                 <p className="text-xs text-[#404942]">
-                  Chronological scheduling guard active. Dropping cards into past days (Day 1 & 2) is strictly blocked.
+                  Drag topics between days to organize your daily study routine.
                 </p>
               </div>
             </div>
@@ -712,9 +721,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
             <div className="flex items-center gap-2">
               <button
                 onClick={handleAutoBalance}
-                className="px-3 py-1.5 rounded-xl bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-xs font-semibold border border-[#c0c9c0]/30 transition-colors cursor-pointer"
+                disabled={isBoardLocked}
+                className="px-3 py-1.5 rounded-xl bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-xs font-semibold border border-[#c0c9c0]/30 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                title={isBoardLocked ? 'Save challenge first to unlock auto-balancing' : undefined}
               >
-                Auto-balance Workload
+                Balance Days
               </button>
 
               <button
@@ -723,12 +734,41 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 className="px-5 py-2 rounded-xl bg-[#003820] hover:bg-[#004e2d] text-white text-xs font-bold shadow-md shadow-[#003820]/20 flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
               >
                 <span className="material-symbols-outlined text-sm text-[#6ffbbe]">
-                  rocket_launch
+                  {isChallengeSaved ? 'check_circle' : 'save'}
                 </span>
-                <span>{isCreatingChallenge ? 'Saving to Firestore...' : 'Start Challenge & Save'}</span>
+                <span>
+                  {isCreatingChallenge
+                    ? 'Saving Challenge...'
+                    : isChallengeSaved
+                    ? 'Challenge Saved'
+                    : 'Save Challenge'}
+                </span>
               </button>
             </div>
           </div>
+
+          {/* Board Gating Status Banner */}
+          {!isChallengeSaved ? (
+            <div className="px-3.5 py-2 rounded-xl bg-[#eff4ff] border border-[#c0c9c0]/40 text-xs text-[#404942] flex items-center justify-between gap-2 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-base text-[#006c49]">lock</span>
+                <span>Planning board is locked. Click <strong>Save Challenge</strong> to save your sprint and unlock drag & drop planning.</span>
+              </div>
+              <span className="text-[10px] font-mono uppercase font-bold text-[#707971] bg-white px-2 py-0.5 rounded border border-[#c0c9c0]/30 shrink-0">
+                Locked
+              </span>
+            </div>
+          ) : (
+            <div className="px-3.5 py-2 rounded-xl bg-[#eff4ff] border border-[#006c49]/30 text-xs text-[#003820] flex items-center justify-between gap-2 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-base text-[#006c49]">lock_open</span>
+                <span>Challenge saved to Firestore. Planning board is unlocked for drag & drop customization.</span>
+              </div>
+              <span className="text-[10px] font-mono uppercase font-bold text-[#006c49] bg-white px-2 py-0.5 rounded border border-[#006c49]/30 shrink-0">
+                Unlocked
+              </span>
+            </div>
+          )}
 
           {/* DnD Context Board */}
           <DndContext
@@ -738,7 +778,9 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           >
             <div
               ref={scrollContainerRef}
-              className="flex gap-4 overflow-x-auto pb-4 pt-1 snap-x scrollbar-thin scrollbar-thumb-[#c0c9c0]"
+              className={`flex gap-4 overflow-x-auto pb-4 pt-1 snap-x scrollbar-thin scrollbar-thumb-[#c0c9c0] transition-opacity duration-200 ${
+                isBoardLocked ? 'opacity-75' : ''
+              }`}
             >
               {columns.map((column) => {
                 const columnCards = boardCards.filter((c) => c.dayNumber === column.dayNumber);
@@ -751,6 +793,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                     currentDay={currentDay}
                     activeCard={activeCard}
                     onCardClick={handleCardClick}
+                    isBoardLocked={isBoardLocked}
                   />
                 );
               })}

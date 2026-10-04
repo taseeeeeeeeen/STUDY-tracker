@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ADMIN_EMAILS } from '../firebase';
 
 export const LoginPage: React.FC = () => {
   const { user, signInWithGoogle, loading, authError, clearAuthError } = useAuth();
@@ -49,7 +48,7 @@ export const LoginPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#e5eeff] text-[#003820]">
             <span className="w-2 h-2 rounded-full bg-[#006c49] animate-pulse" />
-            Firebase Auth Active
+            Secure Sign-In
           </span>
         </div>
       </header>
@@ -71,7 +70,7 @@ export const LoginPage: React.FC = () => {
                 Welcome to StudyTrack
               </h1>
               <p className="text-xs text-[#404942] mt-1.5 max-w-xs mx-auto leading-relaxed">
-                Sign in to synchronize your HSC syllabus mastery, daily sprint backlog, and real-time cohort ranks.
+                Sign in to track your HSC syllabus, organize daily study plans, and study with friends.
               </p>
             </div>
           </div>
@@ -133,13 +132,13 @@ export const LoginPage: React.FC = () => {
                 <span className="material-symbols-outlined text-sm text-[#006c49]">
                   verified_user
                 </span>
-                <span>Role-Based Access Control (RBAC)</span>
+                <span>Account Access</span>
               </div>
               <p className="leading-relaxed">
-                Standard Google accounts receive <code className="px-1 py-0.5 rounded bg-white font-mono text-[10px] text-[#003820] font-bold">role: "user"</code> with full access to Dashboards, Challenge Wizards, and Peer Arenas.
+                Sign in with any Google account to access your study dashboard, sprint planner, and peer groups.
               </p>
               <p className="leading-relaxed text-[10px] text-[#707971] pt-0.5 border-t border-[#c0c9c0]/30">
-                Primary administrator (<code className="font-mono text-[#003820] font-semibold">{ADMIN_EMAILS[0]}</code>) is automatically detected and provisioned with <code className="px-1 py-0.5 rounded bg-white font-mono text-[10px] text-purple-700 font-bold">role: "admin"</code>.
+                Designated administrator accounts automatically receive access to manage user accounts and global syllabus.
               </p>
             </div>
           </div>
@@ -151,8 +150,8 @@ export const LoginPage: React.FC = () => {
                 check_circle
               </span>
               <div>
-                <span className="font-bold text-[11px] block text-[#0b1c30]">2-Point Topics</span>
-                <span className="text-[10px] text-[#707971]">Theory (1) + Practice (1)</span>
+                <span className="font-bold text-[11px] block text-[#0b1c30]">Structured Topics</span>
+                <span className="text-[10px] text-[#707971]">Theory & practice tracking</span>
               </div>
             </div>
 
@@ -161,8 +160,8 @@ export const LoginPage: React.FC = () => {
                 check_circle
               </span>
               <div>
-                <span className="font-bold text-[11px] block text-[#0b1c30]">Anti-Time Travel</span>
-                <span className="text-[10px] text-[#707971]">Draggable Day Validation</span>
+                <span className="font-bold text-[11px] block text-[#0b1c30]">Smart Scheduling</span>
+                <span className="text-[10px] text-[#707971]">Plan days in order</span>
               </div>
             </div>
 
@@ -171,8 +170,8 @@ export const LoginPage: React.FC = () => {
                 check_circle
               </span>
               <div>
-                <span className="font-bold text-[11px] block text-[#0b1c30]">Cohort Rankings</span>
-                <span className="text-[10px] text-[#707971]">Mathematical Tie-Breaker</span>
+                <span className="font-bold text-[11px] block text-[#0b1c30]">Study Leaderboard</span>
+                <span className="text-[10px] text-[#707971]">Real-time group progress</span>
               </div>
             </div>
 
@@ -181,8 +180,8 @@ export const LoginPage: React.FC = () => {
                 check_circle
               </span>
               <div>
-                <span className="font-bold text-[11px] block text-[#0b1c30]">Cloud Persistence</span>
-                <span className="text-[10px] text-[#707971]">Secure Firestore Store</span>
+                <span className="font-bold text-[11px] block text-[#0b1c30]">Automatic Sync</span>
+                <span className="text-[10px] text-[#707971]">Saved across all devices</span>
               </div>
             </div>
           </div>
@@ -191,7 +190,7 @@ export const LoginPage: React.FC = () => {
 
       {/* Footer */}
       <footer className="py-4 text-center text-xs text-[#707971] border-t border-[#e5eeff] bg-white/60">
-        StudyTrack • Firebase Modular SDK v9+ with Role-Based Access Control
+        StudyTrack • HSC Study Tracker
       </footer>
     </div>
   );

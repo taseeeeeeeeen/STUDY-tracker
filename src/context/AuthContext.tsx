@@ -43,7 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // User does not exist in 'users' collection -> Create new record
         const newUser: AppUser = {
           uid: fbUser.uid,
-          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'StudyTrack Scholar',
+          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'HSC Student',
           email: fbUser.email || '',
           photoURL: fbUser.photoURL || '',
           role: assignedRole,

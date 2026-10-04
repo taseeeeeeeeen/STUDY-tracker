@@ -42,14 +42,14 @@ export const StudyModeModal: React.FC<StudyModeModalProps> = ({
         <div className="flex items-center gap-3">
           <span className="w-3 h-3 rounded-full bg-[#6ffbbe] animate-pulse" />
           <span className="text-sm tracking-widest font-mono uppercase text-[#6ffbbe]">
-            Deep Focus Mode Active
+            Study Timer
           </span>
         </div>
         <button
           onClick={onClose}
           className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold tracking-wide transition-colors flex items-center gap-1.5"
         >
-          <span className="material-symbols-outlined text-base">close</span> Exit Study Mode
+          <span className="material-symbols-outlined text-base">close</span> Exit
         </button>
       </div>
 
@@ -112,7 +112,7 @@ export const StudyModeModal: React.FC<StudyModeModalProps> = ({
             <span className="material-symbols-outlined text-xl">
               {isActive ? 'pause' : 'play_arrow'}
             </span>
-            <span>{isActive ? 'Pause Focus' : 'Start Focus'}</span>
+            <span>{isActive ? 'Pause' : 'Start'}</span>
           </button>
           <button
             onClick={() => {
@@ -129,7 +129,7 @@ export const StudyModeModal: React.FC<StudyModeModalProps> = ({
 
       {/* Footer */}
       <div className="text-xs text-white/50 font-mono">
-        StudyTrack Focus Space • No interruptions • Pure mastery
+        StudyTrack • Stay focused on one topic at a time
       </div>
     </div>
   );

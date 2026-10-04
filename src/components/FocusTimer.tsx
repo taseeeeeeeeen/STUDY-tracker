@@ -61,7 +61,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
             }`}
           />
           <span className="text-xs text-[#0b1c30] font-semibold tracking-wider uppercase font-sans">
-            Active Focus Session
+            Study Timer
           </span>
         </div>
 
@@ -85,7 +85,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
           {currentTopicTitle}
         </p>
         <span className="text-xs text-[#404942] mt-0.5">
-          Focus Sprint {sprintCount} of 4
+          Session {sprintCount} of 4
         </span>
       </div>
 
@@ -99,7 +99,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
             {isRunning ? 'pause' : secondsLeft === 0 ? 'replay' : 'play_arrow'}
           </span>
           <span>
-            {isRunning ? 'Pause Focus' : secondsLeft === 0 ? 'Restart Session' : 'Start Focus'}
+            {isRunning ? 'Pause' : secondsLeft === 0 ? 'Restart' : 'Start Timer'}
           </span>
         </button>
 

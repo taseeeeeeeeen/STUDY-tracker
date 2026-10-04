@@ -20,7 +20,7 @@ export const DetailedBreakdownModal: React.FC<DetailedBreakdownModalProps> = ({
         <div className="flex items-center justify-between pb-3 border-b border-[#e5eeff]">
           <div>
             <h3 className="text-base font-bold text-[#0b1c30]">Weekly Subject Breakdown</h3>
-            <p className="text-xs text-[#404942]">Real-time completion metrics per syllabus discipline</p>
+            <p className="text-xs text-[#404942]">Topics completed and remaining for each subject</p>
           </div>
           <button
             onClick={onClose}
@@ -67,7 +67,7 @@ export const DetailedBreakdownModal: React.FC<DetailedBreakdownModalProps> = ({
             onClick={onClose}
             className="px-4 py-2 bg-[#003820] text-white text-xs font-semibold rounded-xl"
           >
-            Close Breakdown
+            Close
           </button>
         </div>
       </div>

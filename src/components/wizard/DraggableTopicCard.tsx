@@ -7,15 +7,18 @@ interface DraggableTopicCardProps {
   card: BoardCard;
   isPastColumn: boolean;
   onCardClick: (card: BoardCard) => void;
+  isBoardLocked?: boolean;
 }
 
 export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
   card,
   isPastColumn,
   onCardClick,
+  isBoardLocked = false,
 }) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: card.id,
+    disabled: isBoardLocked,
     data: {
       card,
       dayNumber: card.dayNumber,
@@ -25,7 +28,7 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     opacity: isDragging ? 0.3 : 1,
-    touchAction: 'none',
+    touchAction: isBoardLocked ? 'auto' : 'none',
   };
 
   const getSubjectBadgeStyle = (subject: string) => {
@@ -49,16 +52,17 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
       style={style}
       {...attributes}
       {...listeners}
-      onClick={(e) => {
-        // Only trigger click if not actively dragging
-        if (!isDragging) {
+      onClick={() => {
+        // Only trigger click if not actively dragging and board is unlocked
+        if (!isDragging && !isBoardLocked) {
           onCardClick(card);
         }
       }}
-      className={`bg-white rounded-xl p-3.5 shadow-xs border transition-all cursor-grab active:cursor-grabbing hover:shadow-md select-none group relative ${
-        isPastColumn
-          ? 'border-amber-300/80 bg-amber-50/20'
-          : 'border-[#c0c9c0]/40'
+      className={`bg-white rounded-xl p-3.5 shadow-xs border transition-all select-none group relative ${
+        isBoardLocked
+          ? 'cursor-default border-[#c0c9c0]/30'
+          : 'cursor-grab active:cursor-grabbing hover:shadow-md ' +
+            (isPastColumn ? 'border-amber-300/80 bg-amber-50/20' : 'border-[#c0c9c0]/40')
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -73,14 +77,23 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
         {/* Shift Action Button */}
         <button
           type="button"
+          disabled={isBoardLocked}
           onClick={(e) => {
             e.stopPropagation();
-            onCardClick(card);
+            if (!isBoardLocked) {
+              onCardClick(card);
+            }
           }}
-          className="text-[#707971] hover:text-[#003820] hover:bg-[#eff4ff] p-1 rounded-md transition-colors"
-          title="Shift topic to another future day"
+          className={`p-1 rounded-md transition-colors ${
+            isBoardLocked
+              ? 'text-[#c0c9c0] cursor-not-allowed'
+              : 'text-[#707971] hover:text-[#003820] hover:bg-[#eff4ff] cursor-pointer'
+          }`}
+          title={isBoardLocked ? 'Save challenge first to unlock shifting' : 'Shift topic to another future day'}
         >
-          <span className="material-symbols-outlined text-sm leading-none">swap_horiz</span>
+          <span className="material-symbols-outlined text-sm leading-none">
+            {isBoardLocked ? 'lock' : 'swap_horiz'}
+          </span>
         </button>
       </div>
 

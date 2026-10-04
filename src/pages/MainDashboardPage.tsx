@@ -20,7 +20,6 @@ export const MainDashboardPage: React.FC = () => {
     sprint,
     streakDays,
     currentTime,
-    timeOffsetHours,
     todayCompletionPercentage,
     completedUnits,
     totalUnits,
@@ -28,8 +27,6 @@ export const MainDashboardPage: React.FC = () => {
     toggleDashboardTheory,
     toggleDashboardPractice,
     addDashboardTopic,
-    fastForwardTime,
-    resetTime,
   } = useStudyTrack();
 
   const [isAddTopicOpen, setIsAddTopicOpen] = useState(false);
@@ -50,42 +47,70 @@ export const MainDashboardPage: React.FC = () => {
     <div className="w-full">
       <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-8 py-8 space-y-8">
         {/* Sync Awareness Notification Bar */}
-        <div className="p-3 bg-[#003820] text-white rounded-xl shadow-xs text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-[#6ffbbe]/40">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-sm text-[#6ffbbe]">
-              swap_horizontal_circle
-            </span>
-            <span>
-              <strong>Firestore Real-Time onSnapshot Active:</strong> Toggling Theory or Practice instantly syncs to Room{' '}
-              <strong className="text-[#6ffbbe] font-mono">{activeChallenge?.code || 'CH-9A2X'}</strong> and updates the Peer Arena leaderboard in real-time.
-            </span>
-          </div>
+        {activeChallenge ? (
+          <div className="p-3 bg-[#003820] text-white rounded-xl shadow-xs text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-[#6ffbbe]/40">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-sm text-[#6ffbbe]">
+                swap_horizontal_circle
+              </span>
+              <span>
+                <strong>Live Study Room:</strong> Changes sync instantly to Room{' '}
+                <strong className="text-[#6ffbbe] font-mono">{activeChallenge.code}</strong> and update your group leaderboard.
+              </span>
+            </div>
 
-          <div className="flex items-center gap-3 shrink-0">
-            <Link
-              to="/peer-arena"
-              className="text-[#6ffbbe] hover:underline font-semibold flex items-center gap-0.5"
-            >
-              Live Peer Arena <span className="material-symbols-outlined text-xs">arrow_forward</span>
-            </Link>
-            <Link
-              to="/hsc-progress"
-              className="text-white/80 hover:text-white hover:underline font-semibold flex items-center gap-0.5"
-            >
-              HSC Progress <span className="material-symbols-outlined text-xs">arrow_forward</span>
-            </Link>
+            <div className="flex items-center gap-3 shrink-0">
+              <Link
+                to="/peer-arena"
+                className="text-[#6ffbbe] hover:underline font-semibold flex items-center gap-0.5"
+              >
+                Peer Arena <span className="material-symbols-outlined text-xs">arrow_forward</span>
+              </Link>
+              <Link
+                to="/hsc-progress"
+                className="text-white/80 hover:text-white hover:underline font-semibold flex items-center gap-0.5"
+              >
+                HSC Syllabus <span className="material-symbols-outlined text-xs">arrow_forward</span>
+              </Link>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="p-4 bg-white rounded-xl shadow-xs text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-[#c0c9c0]/30">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-[#eff4ff] rounded-full flex items-center justify-center text-[#003820] shrink-0">
+                <span className="material-symbols-outlined">rocket_launch</span>
+              </div>
+              <div>
+                <p className="font-bold text-[#0b1c30]">No Active Study Sprint</p>
+                <p className="text-[#404942]">Create a challenge or join a room to start tracking your progress with friends.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/challenges"
+                className="px-4 py-2 bg-[#003820] text-white rounded-xl font-bold hover:bg-[#0f5132] transition-colors"
+              >
+                Create Challenge
+              </Link>
+              <Link
+                to="/peer-arena"
+                className="px-4 py-2 bg-[#eff4ff] text-[#003820] rounded-xl font-bold hover:bg-[#e5eeff] transition-colors"
+              >
+                Join Room
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Header Greeting & Action Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <h1 className="text-3xl sm:text-4xl text-[#0b1c30] font-bold tracking-tight">
-                Welcome back, {user?.name || 'Scholar'}
+                Welcome back, {user?.name || 'Student'}
               </h1>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#6ffbbe]/30 text-[#003820] text-xs font-semibold font-mono">
-                {user?.role === 'admin' ? 'Admin' : 'Scholar'}
+                {user?.role === 'admin' ? 'Admin' : 'Student'}
               </span>
               {activeChallenge && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#003820] text-[#6ffbbe] text-xs font-mono font-bold border border-[#6ffbbe]/50">
@@ -95,7 +120,7 @@ export const MainDashboardPage: React.FC = () => {
               )}
             </div>
             <p className="text-sm text-[#404942] flex items-center gap-2">
-              <span>Here's what you need to conquer today</span>
+              <span>Here is your study plan for today</span>
               <span className="w-1 h-1 rounded-full bg-[#c0c9c0]" />
               <span className="font-semibold text-[#0b1c30]">{formattedDate}</span>
             </p>
@@ -104,10 +129,10 @@ export const MainDashboardPage: React.FC = () => {
           <div className="flex items-center gap-3">
             <Link
               to="/challenges"
-              className="px-4 py-2 bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-xs font-semibold rounded-xl shadow-xs border border-[#c0c9c0]/40 transition-all flex items-center gap-1.5"
+              className="px-4 py-2 bg-[#003820] hover:bg-[#004e2d] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              <span className="material-symbols-outlined text-base">military_tech</span>
-              <span>Challenge Wizard</span>
+              <span className="material-symbols-outlined text-base text-[#6ffbbe]">add_task</span>
+              <span>Create Challenge</span>
             </Link>
             <Link
               to="/peer-arena"
@@ -135,16 +160,34 @@ export const MainDashboardPage: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Left Column: Today's Action Zone (7 Cols) */}
           <div className="lg:col-span-7">
-            <ActionZone
-              tasks={tasks}
-              currentTime={currentTime}
-              timeOffsetHours={timeOffsetHours}
-              onToggleTheory={toggleDashboardTheory}
-              onTogglePractice={toggleDashboardPractice}
-              onOpenAddTopic={() => setIsAddTopicOpen(true)}
-              onFastForwardTime={fastForwardTime}
-              onResetTime={resetTime}
-            />
+            {activeChallenge ? (
+              <ActionZone
+                tasks={tasks}
+                currentTime={currentTime}
+                onToggleTheory={toggleDashboardTheory}
+                onTogglePractice={toggleDashboardPractice}
+                onOpenAddTopic={() => setIsAddTopicOpen(true)}
+              />
+            ) : (
+              <div className="bg-white p-12 rounded-3xl border border-dashed border-[#c0c9c0] text-center space-y-4 shadow-sm">
+                <div className="w-16 h-16 bg-[#eff4ff] rounded-2xl flex items-center justify-center mx-auto text-[#003820]">
+                  <span className="material-symbols-outlined text-3xl">task_alt</span>
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold text-[#0b1c30]">Start Your Study Journey</h3>
+                  <p className="text-sm text-[#404942] max-w-sm mx-auto">
+                    You haven't setup a study sprint yet. Plan your topics and schedule to see your daily tasks here.
+                  </p>
+                </div>
+                <Link
+                  to="/challenges"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-[#003820] text-white rounded-2xl font-bold shadow-md hover:bg-[#0f5132] transition-all"
+                >
+                  <span className="material-symbols-outlined text-base">add_circle</span>
+                  Create My First Sprint
+                </Link>
+              </div>
+            )}
           </div>
 
           {/* Right Column: Visualized Data & Extra Bento Cards (5 Cols) */}

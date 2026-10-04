@@ -6,13 +6,16 @@ import {
   deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { MasterSubject } from '../types/syllabus';
-import { DEFAULT_HSC_SYLLABUS } from '../data/defaultSyllabusSeed';
+import { DEFAULT_HSC_SYLLABUS, parseAndNormalizeSyllabus } from '../data/defaultSyllabusSeed';
 
 const COLLECTION_NAME = 'master_syllabus';
 
 export async function fetchMasterSyllabus(): Promise<MasterSubject[]> {
+  if (!auth.currentUser) {
+    return DEFAULT_HSC_SYLLABUS;
+  }
   try {
     const snap = await getDocs(collection(db, COLLECTION_NAME));
     const subjects: MasterSubject[] = [];
@@ -29,6 +32,11 @@ export function subscribeMasterSyllabus(
   onData: (subjects: MasterSubject[]) => void,
   onError?: (err: unknown) => void
 ) {
+  if (!auth.currentUser) {
+    onData(DEFAULT_HSC_SYLLABUS);
+    return () => {};
+  }
+
   return onSnapshot(
     collection(db, COLLECTION_NAME),
     (snap) => {
@@ -67,6 +75,9 @@ export async function deleteSubject(subjectId: string): Promise<void> {
   }
 }
 
+/**
+ * Seeds or imports the default official HSC syllabus into Firestore
+ */
 export async function seedDefaultSyllabus(adminUid?: string): Promise<void> {
   try {
     for (const sub of DEFAULT_HSC_SYLLABUS) {
@@ -74,5 +85,39 @@ export async function seedDefaultSyllabus(adminUid?: string): Promise<void> {
     }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, COLLECTION_NAME);
+  }
+}
+
+/**
+ * Validates and imports arbitrary raw HSC syllabus JSON or MasterSubject[] into Firestore
+ * Uses deterministic stable IDs so re-importing is idempotent and updates existing records.
+ */
+export async function importSyllabusJson(
+  jsonData: unknown,
+  adminUid?: string
+): Promise<{ count: number; subjects: MasterSubject[] }> {
+  try {
+    let parsedData = jsonData;
+    if (typeof jsonData === 'string') {
+      parsedData = JSON.parse(jsonData);
+    }
+
+    const normalizedSubjects = parseAndNormalizeSyllabus(parsedData);
+
+    if (normalizedSubjects.length === 0) {
+      throw new Error('No valid subjects or chapters found in the provided JSON.');
+    }
+
+    for (const sub of normalizedSubjects) {
+      await saveSubject(sub, adminUid);
+    }
+
+    return {
+      count: normalizedSubjects.length,
+      subjects: normalizedSubjects,
+    };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, COLLECTION_NAME);
+    throw err;
   }
 }

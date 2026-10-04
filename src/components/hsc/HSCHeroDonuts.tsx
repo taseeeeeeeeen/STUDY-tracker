@@ -39,17 +39,17 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-3 border-b border-[#e5eeff]/80">
           <div>
             <span className="text-[11px] text-[#006c49] uppercase tracking-wider font-semibold font-mono">
-              Macro Syllabus Tracker
+              Overall Syllabus
             </span>
             <h2 className="text-xl text-[#0b1c30] font-bold tracking-tight">
-              Total HSC Curriculum Completion
+              HSC Syllabus Completion
             </h2>
           </div>
           <div className="flex items-center gap-1.5 bg-[#6ffbbe]/25 text-[#003820] px-3 py-1 rounded-full self-start sm:self-auto border border-[#6ffbbe]/80">
             <span className="material-symbols-outlined text-sm font-semibold text-[#006c49]">
               trending_up
             </span>
-            <span className="text-xs font-semibold font-mono">+4.2% this week</span>
+            <span className="text-xs font-semibold font-mono">Weekly progress</span>
           </div>
         </div>
 
@@ -103,7 +103,7 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
                   {Math.round(grandProgressPercent)}%
                 </span>
                 <span className="text-[11px] text-[#404942] font-semibold uppercase tracking-wider">
-                  Grand Progress
+                  Overall Progress
                 </span>
               </div>
             </div>
@@ -112,7 +112,7 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
               <span className="text-base text-[#0b1c30] font-bold tabular-nums">
                 {completedTopicsCount} of {totalTopics} Topics
               </span>
-              <p className="text-xs text-[#404942]">Mastered across 6 Core Papers</p>
+              <p className="text-xs text-[#404942]">Across Physics, Chemistry, Math & Biology</p>
             </div>
           </div>
 
@@ -125,10 +125,10 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
                 </div>
                 <div>
                   <div className="text-xs text-[#0b1c30] font-semibold">
-                    Comprehensive Chapters
+                    Completed Chapters
                   </div>
                   <div className="text-[11px] text-[#404942]">
-                    {completedChaptersCount} of {totalChapters} chapters fully cleared
+                    {completedChaptersCount} of {totalChapters} chapters completed
                   </div>
                 </div>
               </div>
@@ -148,10 +148,10 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
                 </div>
                 <div>
                   <div className="text-xs text-[#0b1c30] font-semibold">
-                    Board Question Drill Bank
+                    MCQ Practice
                   </div>
                   <div className="text-[11px] text-[#404942]">
-                    {completedMCQs.toLocaleString()} of {totalMCQs.toLocaleString()} MCQs answered
+                    {completedMCQs.toLocaleString()} of {totalMCQs.toLocaleString()} questions practiced
                   </div>
                 </div>
               </div>
@@ -169,10 +169,10 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
                 </div>
                 <div>
                   <div className="text-xs text-[#0b1c30] font-semibold">
-                    Creative Question (CQ) Sets
+                    CQ Practice
                   </div>
                   <div className="text-[11px] text-[#404942]">
-                    {completedCQs} of {totalCQs} verified written models
+                    {completedCQs} of {totalCQs} creative questions solved
                   </div>
                 </div>
               </div>
@@ -219,15 +219,15 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
             </div>
             <div className="flex flex-col min-w-0">
               <span className="text-xs text-[#0b1c30] font-bold truncate">
-                Overall Theory Mastery
+                Theory Coverage
               </span>
               <span className="text-[11px] text-[#404942]">
-                Depth Gauge: {completedTheoryCount}/{totalTopics} Topics
+                {completedTheoryCount}/{totalTopics} Topics Completed
               </span>
               <div className="flex items-center gap-1 mt-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#003820]" />
                 <span className="text-[10px] text-[#003820] font-medium font-mono">
-                  Textbook Conceptual Lock
+                  Textbook Concepts
                 </span>
               </div>
             </div>
@@ -265,15 +265,15 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
             </div>
             <div className="flex flex-col min-w-0">
               <span className="text-xs text-[#0b1c30] font-bold truncate">
-                Practice & Drills
+                Practice Coverage
               </span>
               <span className="text-[11px] text-[#404942]">
-                Question Tracker: {completedPracticeCount}/{totalTopics} Complete
+                {completedPracticeCount}/{totalTopics} Problem Sets Done
               </span>
               <div className="flex items-center gap-1 mt-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#006c49]" />
                 <span className="text-[10px] text-[#006c49] font-medium font-mono">
-                  Test Paper Mock Drills
+                  Problem Sets & Drills
                 </span>
               </div>
             </div>
@@ -286,15 +286,15 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-[#404942] uppercase tracking-wider font-semibold font-mono">
-              Predictive Model
+              Estimated Readiness
             </span>
             <span className="bg-[#eff4ff] text-[#003820] px-2 py-0.5 rounded text-[11px] font-semibold border border-[#c0c9c0]/30 font-mono">
-              HSC 2025 Standard
+              HSC Standard
             </span>
           </div>
           <h2 className="text-lg text-[#0b1c30] font-bold">Board Exam Readiness</h2>
           <p className="text-xs text-[#404942]">
-            Calculated from topic weights, revision recency, and past board question sets.
+            Based on your syllabus completion and practice question coverage.
           </p>
         </div>
 
@@ -302,13 +302,13 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
         <div className="my-5 p-5 rounded-2xl bg-gradient-to-br from-[#0f5132] via-[#003820] to-[#002111] text-white flex items-center justify-between shadow-sm relative overflow-hidden">
           <div className="flex flex-col relative z-10">
             <span className="text-[11px] text-[#95d4ac] font-semibold uppercase tracking-wider font-mono">
-              Projected Output
+              Target Range
             </span>
             <span className="text-4xl font-extrabold tracking-tight">
               Grade {grandProgressPercent >= 80 ? 'A+' : grandProgressPercent >= 70 ? 'A' : 'A-'}
             </span>
             <span className="text-xs text-white/90 mt-1">
-              {(85 + (grandProgressPercent / 100) * 14).toFixed(1)}th Board Percentile Rank
+              {(85 + (grandProgressPercent / 100) * 14).toFixed(1)}th Percentile
             </span>
           </div>
           <div className="relative z-10 text-right">
@@ -316,7 +316,7 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
               workspace_premium
             </span>
             <div className="text-xs font-semibold text-[#6ffbbe] mt-1 font-mono">
-              GPA 5.00 SAFE
+              GPA 5.00 GOAL
             </div>
           </div>
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/5 pointer-events-none" />
@@ -326,8 +326,8 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
         <div className="flex flex-col gap-2.5 text-xs">
           <div className="flex items-center justify-between py-1 border-b border-[#e5eeff]/80">
             <div className="flex items-center gap-2 text-[#404942]">
-              <span className="material-symbols-outlined text-base text-[#006c49]">speed</span>
-              <span className="text-[#0b1c30]">Study Velocity</span>
+              <span className="material-symbols-outlined text-base text-[#006c49]">schedule</span>
+              <span className="text-[#0b1c30]">Daily Study Time</span>
             </div>
             <span className="font-bold text-[#0b1c30] font-mono">2.8 hrs/day</span>
           </div>
@@ -338,14 +338,14 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
               </span>
               <span className="text-[#0b1c30]">Past Papers Solved</span>
             </div>
-            <span className="font-bold text-[#0b1c30] font-mono">12 Complete</span>
+            <span className="font-bold text-[#0b1c30] font-mono">12 Papers</span>
           </div>
           <div className="flex items-center justify-between py-1 border-b border-[#e5eeff]/80">
             <div className="flex items-center gap-2 text-[#404942]">
               <span className="material-symbols-outlined text-base text-[#006c49]">
                 check_circle
               </span>
-              <span className="text-[#0b1c30]">CQ Accuracy Margin</span>
+              <span className="text-[#0b1c30]">CQ Practice Accuracy</span>
             </div>
             <span className="font-bold text-[#0b1c30] font-mono">88.5%</span>
           </div>
@@ -354,7 +354,7 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
               <span className="material-symbols-outlined text-base text-[#006c49]">
                 history_toggle_off
               </span>
-              <span className="text-[#0b1c30]">Avg. MCQ Time/Item</span>
+              <span className="text-[#0b1c30]">Avg. Time per MCQ</span>
             </div>
             <span className="font-bold text-[#0b1c30] font-mono">48 sec</span>
           </div>

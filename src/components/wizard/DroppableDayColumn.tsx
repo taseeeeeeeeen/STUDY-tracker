@@ -9,6 +9,7 @@ interface DroppableDayColumnProps {
   currentDay: number;
   activeCard: BoardCard | null;
   onCardClick: (card: BoardCard) => void;
+  isBoardLocked?: boolean;
 }
 
 export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
@@ -17,12 +18,14 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
   currentDay,
   activeCard,
   onCardClick,
+  isBoardLocked = false,
 }) => {
   const isPast = column.dayNumber < currentDay;
   const isToday = column.dayNumber === currentDay;
 
   const { isOver, setNodeRef } = useDroppable({
     id: `column-${column.dayNumber}`,
+    disabled: isBoardLocked,
     data: {
       dayNumber: column.dayNumber,
       isPast,
@@ -121,6 +124,7 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
             card={card}
             isPastColumn={isPast}
             onCardClick={onCardClick}
+            isBoardLocked={isBoardLocked}
           />
         ))}
 
@@ -128,8 +132,8 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
         {isOver && isPast && (
           <div className="p-3 rounded-xl border border-[#ba1a1a] bg-[#ffdad6] text-[#93000a] text-center text-xs font-semibold flex flex-col items-center gap-1 animate-pulse">
             <span className="material-symbols-outlined text-base">block</span>
-            <span>Time Travel Prevented!</span>
-            <span className="text-[10px] font-normal">Cannot drop into a past day</span>
+            <span>Day is Locked</span>
+            <span className="text-[10px] font-normal">Cannot schedule topics for past days</span>
           </div>
         )}
 

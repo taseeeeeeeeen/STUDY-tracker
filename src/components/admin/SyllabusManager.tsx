@@ -5,7 +5,9 @@ import {
   saveSubject,
   deleteSubject,
   seedDefaultSyllabus,
+  importSyllabusJson,
 } from '../../services/syllabusService';
+import { parseAndNormalizeSyllabus } from '../../data/defaultSyllabusSeed';
 import { useAuth } from '../../context/AuthContext';
 
 export const SyllabusManager: React.FC = () => {
@@ -13,11 +15,22 @@ export const SyllabusManager: React.FC = () => {
   const [subjects, setSubjects] = useState<MasterSubject[]>([]);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [expandedSubjectId, setExpandedSubjectId] = useState<string | null>(null);
   const [expandedChapterId, setExpandedChapterId] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
 
   // Modals state
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [jsonInput, setJsonInput] = useState('');
+  const [importPreview, setImportPreview] = useState<{
+    subjectsCount: number;
+    chaptersCount: number;
+    topicsCount: number;
+    isValid: boolean;
+    error?: string;
+  } | null>(null);
+
   const [subjectModalOpen, setSubjectModalOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<MasterSubject | null>(null);
   const [subjectForm, setSubjectForm] = useState({ id: '', name: '', code: '', color: '#003820' });
@@ -44,6 +57,8 @@ export const SyllabusManager: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!user) return;
+
     const unsubscribe = subscribeMasterSyllabus(
       (data) => {
         setSubjects(data);
@@ -55,7 +70,7 @@ export const SyllabusManager: React.FC = () => {
       () => setLoading(false)
     );
     return () => unsubscribe();
-  }, []);
+  }, [user]);
 
   // Handle Seeding
   const handleSeed = async () => {
@@ -67,6 +82,77 @@ export const SyllabusManager: React.FC = () => {
       notify('Failed to seed syllabus.');
     } finally {
       setSeeding(false);
+    }
+  };
+
+  // Handle JSON Import
+  const handleOpenImport = () => {
+    setJsonInput('');
+    setImportPreview(null);
+    setImportModalOpen(true);
+  };
+
+  const handleValidateJson = (text: string) => {
+    setJsonInput(text);
+    if (!text.trim()) {
+      setImportPreview(null);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(text);
+      const normalized = parseAndNormalizeSyllabus(parsed);
+      const chaptersCount = normalized.reduce((acc, s) => acc + s.chapters.length, 0);
+      const topicsCount = normalized.reduce(
+        (acc, s) => acc + s.chapters.reduce((cAcc, c) => cAcc + c.topics.length, 0),
+        0
+      );
+
+      setImportPreview({
+        subjectsCount: normalized.length,
+        chaptersCount,
+        topicsCount,
+        isValid: true,
+      });
+    } catch (err: unknown) {
+      setImportPreview({
+        subjectsCount: 0,
+        chaptersCount: 0,
+        topicsCount: 0,
+        isValid: false,
+        error: err instanceof Error ? err.message : 'Invalid JSON format',
+      });
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        handleValidateJson(content);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleExecuteImport = async () => {
+    if (!jsonInput.trim()) return;
+    setImporting(true);
+
+    try {
+      const res = await importSyllabusJson(jsonInput, user?.uid);
+      notify(`Successfully imported ${res.count} subjects into Master Syllabus!`);
+      setImportModalOpen(false);
+      setJsonInput('');
+      setImportPreview(null);
+    } catch (err: unknown) {
+      notify(`Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -303,23 +389,32 @@ export const SyllabusManager: React.FC = () => {
           <div className="flex items-center gap-2 mb-1">
             <span className="material-symbols-outlined text-lg text-[#006c49]">auto_stories</span>
             <h2 className="text-lg font-bold text-[#003820] tracking-tight">
-              Master Syllabus Management (CRUD)
+              Master Syllabus Manager
             </h2>
           </div>
           <p className="text-xs text-[#707971]">
-            Global curriculum stored in <code className="font-mono text-[#003820]">/master_syllabus</code>. Normal users cannot modify this data and fetch directly from here.
+            Manage standard subjects, chapters, and topics for all students.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
+            onClick={handleOpenImport}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-800 font-bold text-xs border border-purple-200 transition-colors cursor-pointer"
+            title="Import or paste raw syllabus JSON"
+          >
+            <span className="material-symbols-outlined text-sm text-purple-700">upload_file</span>
+            <span>Import JSON</span>
+          </button>
+
+          <button
             onClick={handleSeed}
             disabled={seeding}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] font-bold text-xs border border-[#c0c9c0]/40 transition-colors cursor-pointer disabled:opacity-50"
-            title="Populate complete HSC official subjects, chapters, and topics"
+            title="Populate standard HSC subjects and topics"
           >
             <span className="material-symbols-outlined text-sm">cloud_sync</span>
-            <span>{seeding ? 'Seeding...' : 'Seed Default HSC Syllabus'}</span>
+            <span>{seeding ? 'Loading...' : 'Load HSC Syllabus'}</span>
           </button>
 
           <button
@@ -364,7 +459,7 @@ export const SyllabusManager: React.FC = () => {
         </div>
         <div className="p-3.5 rounded-2xl bg-[#f8f9ff] border border-[#c0c9c0]/30">
           <span className="text-[10px] font-mono uppercase font-bold text-[#707971] block">
-            Master Topics
+            Topics
           </span>
           <span className="text-xl font-black text-[#006c49] tabular-nums">
             {totalTopics}
@@ -377,7 +472,7 @@ export const SyllabusManager: React.FC = () => {
         {loading ? (
           <div className="p-12 text-center text-xs text-[#707971]">
             <div className="w-5 h-5 border-2 border-[#003820] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            Loading Master Syllabus from Firestore...
+            Loading syllabus...
           </div>
         ) : subjects.length === 0 ? (
           <div className="p-10 border-2 border-dashed border-[#c0c9c0]/50 rounded-3xl text-center space-y-3">
@@ -385,16 +480,16 @@ export const SyllabusManager: React.FC = () => {
               <span className="material-symbols-outlined text-2xl">menu_book</span>
             </div>
             <div>
-              <p className="font-bold text-sm text-[#0b1c30]">The Master Syllabus is currently empty</p>
+              <p className="font-bold text-sm text-[#0b1c30]">No subjects found in syllabus</p>
               <p className="text-xs text-[#707971] mt-0.5">
-                Click &quot;Seed Default HSC Syllabus&quot; above to instantly populate standard HSC subjects, or create a new subject manually.
+                Click &quot;Load HSC Syllabus&quot; above to populate standard HSC subjects, or create a new subject manually.
               </p>
             </div>
             <button
               onClick={handleSeed}
               className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold shadow-xs hover:bg-[#004e2d] cursor-pointer"
             >
-              Seed Official Syllabus
+              Load Syllabus
             </button>
           </div>
         ) : (
@@ -822,6 +917,129 @@ export const SyllabusManager: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {/* MODAL: IMPORT SYLLABUS JSON */}
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-white rounded-3xl p-6 shadow-xl space-y-4 border border-[#c0c9c0]/40 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-[#e5eeff]">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-xl">upload_file</span>
+                </div>
+                <div>
+                  <h3 className="font-black text-base text-[#003820]">
+                    Import Global Master Syllabus
+                  </h3>
+                  <p className="text-[11px] text-[#707971]">
+                    Paste raw HSC syllabus JSON or upload a .json file. Stable IDs ensure safe updates.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setImportModalOpen(false)}
+                className="p-1 rounded-lg text-[#707971] hover:text-[#0b1c30] hover:bg-[#eff4ff]"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-3 flex-1 overflow-y-auto pr-1">
+              {/* File upload option */}
+              <div className="p-3 rounded-2xl bg-[#f8f9ff] border border-dashed border-[#c0c9c0]/60 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs text-[#0b1c30]">
+                  <span className="material-symbols-outlined text-base text-purple-700">attach_file</span>
+                  <span className="font-medium">Upload .json file:</span>
+                </div>
+                <label className="px-3 py-1.5 rounded-xl bg-white hover:bg-[#eff4ff] text-xs font-bold text-[#003820] border border-[#c0c9c0]/40 cursor-pointer shadow-2xs">
+                  <span>Browse File</span>
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Textarea for JSON */}
+              <div>
+                <label className="text-[11px] font-mono font-bold text-[#707971] block mb-1">
+                  Or Paste JSON Content Below
+                </label>
+                <textarea
+                  rows={8}
+                  value={jsonInput}
+                  onChange={(e) => handleValidateJson(e.target.value)}
+                  placeholder='[ { "subject_name": "বাংলা ১ম পত্র", "chapter_name": "গদ্য", "topics": [...] } ]'
+                  className="w-full text-xs font-mono p-3 rounded-xl border border-[#c0c9c0]/60 bg-[#f8f9ff] text-[#0b1c30] focus:outline-none focus:border-[#003820]"
+                />
+              </div>
+
+              {/* Validation Preview Deck */}
+              {importPreview && (
+                <div
+                  className={`p-3.5 rounded-2xl border text-xs ${
+                    importPreview.isValid
+                      ? 'bg-[#eff4ff] border-[#006c49]/40 text-[#003820]'
+                      : 'bg-red-50 border-red-200 text-red-800'
+                  }`}
+                >
+                  {importPreview.isValid ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <span className="material-symbols-outlined text-sm text-[#006c49]">check_circle</span>
+                        <span>Valid Syllabus JSON Detected</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-[11px] font-mono pt-1">
+                        <div className="bg-white/80 p-2 rounded-xl border border-[#c0c9c0]/30 text-center">
+                          <span className="text-[#707971] block text-[9px] uppercase">Subjects</span>
+                          <span className="text-sm font-bold text-[#003820]">{importPreview.subjectsCount}</span>
+                        </div>
+                        <div className="bg-white/80 p-2 rounded-xl border border-[#c0c9c0]/30 text-center">
+                          <span className="text-[#707971] block text-[9px] uppercase">Chapters</span>
+                          <span className="text-sm font-bold text-[#0b1c30]">{importPreview.chaptersCount}</span>
+                        </div>
+                        <div className="bg-white/80 p-2 rounded-xl border border-[#c0c9c0]/30 text-center">
+                          <span className="text-[#707971] block text-[9px] uppercase">Topics</span>
+                          <span className="text-sm font-bold text-[#006c49]">{importPreview.topicsCount}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <span className="material-symbols-outlined text-base text-red-600 shrink-0">error</span>
+                      <div>
+                        <div className="font-bold">Invalid Syllabus JSON</div>
+                        <div className="text-[11px] opacity-90 mt-0.5">{importPreview.error}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e5eeff]">
+              <button
+                type="button"
+                onClick={() => setImportModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#707971] hover:bg-[#eff4ff]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteImport}
+                disabled={!importPreview?.isValid || importing}
+                className="px-5 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] disabled:opacity-40 cursor-pointer flex items-center gap-1.5 shadow-xs"
+              >
+                <span className="material-symbols-outlined text-sm">cloud_upload</span>
+                <span>{importing ? 'Importing...' : 'Save to Global Syllabus'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

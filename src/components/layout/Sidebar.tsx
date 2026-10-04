@@ -78,7 +78,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   StudyTrack
                 </span>
                 <span className="text-[10px] text-[#404942] font-mono -mt-1">
-                  Academic Rhythm
+                  HSC Study Tracker
                 </span>
               </div>
             </div>
@@ -151,10 +151,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           <div className="p-3 bg-[#eff4ff] rounded-xl border border-[#c0c9c0]/30 text-xs flex flex-col gap-1">
             <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#006c49] uppercase tracking-wide font-mono">
               <span className="w-2 h-2 rounded-full bg-[#006c49] animate-pulse" />
-              <span>Firebase RBAC Active</span>
+              <span>Cloud Sync Active</span>
             </div>
             <p className="text-[11px] text-[#404942] leading-tight">
-              Firestore document <code className="font-mono text-[#003820]">users/{user?.uid?.slice(0, 6)}...</code> synchronized.
+              Your study progress is automatically synced in real time.
             </p>
           </div>
 

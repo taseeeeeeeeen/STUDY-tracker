@@ -4,23 +4,17 @@ import { Task } from '../types/dashboard';
 interface ActionZoneProps {
   tasks: Task[];
   currentTime: number;
-  timeOffsetHours: number;
   onToggleTheory: (taskId: string) => void;
   onTogglePractice: (taskId: string) => void;
   onOpenAddTopic: () => void;
-  onFastForwardTime: (hours: number) => void;
-  onResetTime: () => void;
 }
 
 export const ActionZone: React.FC<ActionZoneProps> = ({
   tasks,
   currentTime,
-  timeOffsetHours,
   onToggleTheory,
   onTogglePractice,
   onOpenAddTopic,
-  onFastForwardTime,
-  onResetTime,
 }) => {
   const [filter, setFilter] = useState<'all' | 'priority' | 'completed'>('all');
 
@@ -73,10 +67,10 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
         <div className="flex items-center gap-3">
           <h2 className="text-xl text-[#0b1c30] font-bold tracking-tight">
-            Today's Action Zone
+            Today's Study Plan
           </h2>
           <span className="px-2.5 py-0.5 rounded-full bg-[#e5eeff] text-[#0b1c30] text-xs font-semibold font-mono tabular-nums">
-            {tasks.length} Sessions
+            {tasks.length} Topics
           </span>
         </div>
 
@@ -90,7 +84,7 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
                 : 'text-[#404942] hover:text-[#0b1c30]'
             }`}
           >
-            All Tasks ({tasks.length})
+            All Topics ({tasks.length})
           </button>
           <button
             onClick={() => setFilter('priority')}
@@ -115,45 +109,14 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
         </div>
       </div>
 
-      {/* Time Simulation & Locking Testing Bar */}
-      <div className="p-3 bg-white rounded-xl border border-[#c0c9c0]/40 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-[#006c49] text-base">timer</span>
-          <span className="text-[#404942]">
-            <strong className="text-[#0b1c30]">24-Hour Expiration Engine:</strong> Tasks older than 24h automatically lock and disable Theory/Practice handlers.
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[11px] text-[#404942] font-mono mr-1">
-            {timeOffsetHours > 0 ? `+${timeOffsetHours}h simulated` : 'Real-time'}
-          </span>
-          <button
-            onClick={() => onFastForwardTime(24)}
-            className="px-2.5 py-1 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] font-medium border border-[#c0c9c0]/30 transition-colors cursor-pointer"
-            title="Fast forward simulated time by 24 hours to test automated task locking"
-          >
-            +24h Fast-Forward
-          </button>
-          {timeOffsetHours > 0 && (
-            <button
-              onClick={onResetTime}
-              className="px-2 py-1 rounded-lg bg-[#ba1a1a]/10 hover:bg-[#ba1a1a]/20 text-[#ba1a1a] font-medium transition-colors cursor-pointer"
-              title="Reset time simulation"
-            >
-              Reset
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* Task List Stack */}
       <div className="space-y-3">
         {filteredTasks.length === 0 ? (
           <div className="bg-white p-8 rounded-2xl border border-dashed border-[#c0c9c0] text-center space-y-2">
             <span className="material-symbols-outlined text-3xl text-[#707971]">inbox</span>
-            <p className="text-sm font-medium text-[#0b1c30]">No tasks found for this filter</p>
+            <p className="text-sm font-medium text-[#0b1c30]">No topics found</p>
             <p className="text-xs text-[#404942]">
-              Switch tabs or add a new topic to continue studying.
+              Switch tabs or add a new topic to plan your study session.
             </p>
           </div>
         ) : (
@@ -340,8 +303,8 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
             <span className="material-symbols-outlined text-lg">edit_note</span>
           </div>
           <div>
-            <p className="text-xs font-semibold text-[#0b1c30]">Add extra study session</p>
-            <p className="text-[11px] text-[#404942]">Log an unplanned topic or practice set</p>
+            <p className="text-xs font-semibold text-[#0b1c30]">Add a study topic</p>
+            <p className="text-[11px] text-[#404942]">Add an extra topic or problem set to today's plan</p>
           </div>
         </div>
 
