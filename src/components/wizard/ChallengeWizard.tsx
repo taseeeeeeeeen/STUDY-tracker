@@ -54,6 +54,7 @@ export function parseCardsFromAllocation(
   if (!dayWiseAllocation) return { cards: [], order: [] };
   const restored: BoardCard[] = [];
   const orderedChapterIds: string[] = [];
+  const seenCardIds = new Set<string>();
 
   const sortedDayEntries = Object.entries(dayWiseAllocation).sort(([a], [b]) => {
     const numA = parseInt(a.replace(/\D/g, ''), 10) || 0;
@@ -65,19 +66,24 @@ export function parseCardsFromAllocation(
     const match = dayKey.match(/Day\s+(\d+)/i);
     const dayNum = match ? parseInt(match[1], 10) : 1;
     if (Array.isArray(dayCards)) {
-      dayCards.forEach((c: any) => {
+      dayCards.forEach((c: any, cIdx: number) => {
         const chId =
           c.chapterId ||
-          (c.id ? c.id.replace(/^chapter-/, '') : '') ||
+          (c.id ? c.id.replace(/^chapter-/, '').replace(/-day-\d+.*$/, '') : '') ||
           c.chapterName ||
           c.title ||
           '';
-        const cardId =
+        let cardId =
           c.id && c.id.startsWith('chapter-')
             ? c.id
             : chId
             ? `chapter-${chId}`
             : c.id || `chapter-${Math.random().toString(36).substring(2, 6)}`;
+
+        if (seenCardIds.has(cardId)) {
+          cardId = `${cardId}-day-${dayNum}-${cIdx + 1}`;
+        }
+        seenCardIds.add(cardId);
 
         const chapterName = c.chapterName || c.title || 'Chapter';
         const cardTitle = c.title || chapterName;
@@ -500,7 +506,9 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     // Maintain stable order of chapters as selected
     const currentChapterIds = Array.from(groupsMap.keys());
-    const updatedOrder = chapterOrderRef.current.filter((id) => groupsMap.has(id));
+    const updatedOrder = Array.from(
+      new Set(chapterOrderRef.current.filter((id) => groupsMap.has(id)))
+    );
     currentChapterIds.forEach((id) => {
       if (!updatedOrder.includes(id)) {
         updatedOrder.push(id);
@@ -624,6 +632,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       return minDay;
     };
 
+    const seenNewCardIds = new Set<string>();
     const newBoardCards: BoardCard[] = updatedOrder.map((chId, orderIdx) => {
       const group = groupsMap.get(chId)!;
       const existing =
@@ -682,8 +691,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         };
       });
 
+      let cardId = `chapter-${group.chapterId}`;
+      if (seenNewCardIds.has(cardId)) {
+        cardId = `chapter-${group.chapterId}-d${assignedDay}-${orderIdx + 1}`;
+      }
+      seenNewCardIds.add(cardId);
+
       return {
-        id: `chapter-${group.chapterId}`,
+        id: cardId,
         chapterId: group.chapterId,
         chapterName: group.chapterName,
         subject: group.subject,
@@ -1880,7 +1895,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           ) : (
             /* Subject -> Chapter -> Topic Cascade (Task 3.3: closed by default) */
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {filteredMasterSubjects.map((sub) => {
+              {filteredMasterSubjects.map((sub, subIdx) => {
                 const isSubjectOpen = openSubjectNames.includes(sub.name);
                 const subTopics = sub.chapters.flatMap((c) => c.topics);
                 const subCheckedCount = subTopics.filter((t) => {
@@ -1890,7 +1905,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
                 return (
                   <div
-                    key={sub.id || sub.name}
+                    key={`${sub.id || sub.name}-${subIdx}`}
                     className="bg-white rounded-2xl p-5 shadow-xs border border-[#c0c9c0]/30 flex flex-col gap-3 transition-all"
                   >
                     {/* Subject Header Accordion Toggle */}
@@ -1923,7 +1938,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                     {/* Chapters list (when subject is open) */}
                     {isSubjectOpen && (
                       <div className="flex flex-col gap-3 pt-1 animate-in fade-in duration-150">
-                        {sub.chapters.map((ch) => {
+                        {sub.chapters.map((ch, chIdx) => {
                           const isChapterOpen = openChapterIds.includes(ch.id);
                           const chCheckedCount = ch.topics.filter((t) => {
                             const item = syllabusMap.get(t.id);
@@ -1937,7 +1952,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
                           return (
                             <div
-                              key={ch.id}
+                              key={`${sub.id || sub.name}-${ch.id}-${chIdx}`}
                               className="rounded-xl border border-[#c0c9c0]/30 overflow-hidden bg-[#eff4ff]/20"
                             >
                               {/* Chapter Header Toggle */}
@@ -1983,7 +1998,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                               {/* Topics List in Chapter */}
                               {isChapterOpen && (
                                 <div className="p-3 flex flex-col gap-2 bg-white animate-in fade-in duration-150">
-                                  {ch.topics.map((top) => {
+                                  {ch.topics.map((top, topIdx) => {
                                     const item = syllabusMap.get(top.id) || {
                                       id: top.id,
                                       subject: sub.name,
@@ -1996,7 +2011,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
                                     return (
                                       <label
-                                        key={top.id}
+                                        key={`${ch.id}-${top.id}-${topIdx}`}
                                         className={`flex items-center justify-between p-2.5 rounded-xl border transition-colors cursor-pointer group ${
                                           item.checked
                                             ? 'bg-[#eff4ff] border-[#c0c9c0]/40 hover:bg-[#e5eeff]'

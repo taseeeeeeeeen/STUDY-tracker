@@ -228,9 +228,9 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
           onPointerDown={(e) => e.stopPropagation()}
           className="mt-2.5 pt-2 border-t border-[#e5eeff] space-y-1.5"
         >
-          {topicsList.map((top) => (
+          {topicsList.map((top, topIdx) => (
             <div
-              key={top.id}
+              key={`${top.id}-${topIdx}`}
               className={`p-2 rounded-lg text-[11px] border transition-all flex items-center justify-between gap-2 ${
                 top.isCarriedOver
                   ? 'bg-red-50/80 border-red-300 text-red-900 ring-1 ring-red-400/20'

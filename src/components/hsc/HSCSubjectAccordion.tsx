@@ -176,13 +176,13 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
 
       {/* Subject Cards Stack */}
       <div className="flex flex-col gap-4">
-        {processedSubjects.map((subject) => {
+        {processedSubjects.map((subject, subIdx) => {
           const metrics = getSubjectMetrics(subject);
           const isExpanded = expandedSubjectIds.includes(subject.id);
 
           return (
             <div
-              key={subject.id}
+              key={`${subject.id}-${subIdx}`}
               className="bg-white rounded-2xl shadow-xs border border-[#c0c9c0]/30 overflow-hidden transition-all duration-200"
             >
               {/* Accordion Header */}
@@ -293,7 +293,7 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
                   </div>
 
                   <div className="flex flex-col gap-3">
-                    {subject.chapters.map((chapter) => {
+                    {subject.chapters.map((chapter, chapterIdx) => {
                       const isChapterExpanded = expandedChapterIds.includes(chapter.id);
                       const totalTopicsInChapter = chapter.topics.length;
                       const completedTopicsInChapter = chapter.topics.filter(
@@ -317,7 +317,7 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
 
                       return (
                         <div
-                          key={chapter.id}
+                          key={`${subject.id}-${chapter.id}-${chapterIdx}`}
                           className="bg-white rounded-xl border border-[#c0c9c0]/30 shadow-2xs overflow-hidden transition-all duration-200"
                         >
                           {/* Chapter Header Row */}
@@ -423,7 +423,7 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[#e5eeff]">
-                                  {chapter.topics.map((topic) => {
+                                  {chapter.topics.map((topic, topicIdx) => {
                                     const isFullyDone = topic.is_theory_done && topic.is_practice_done;
                                     const isPartiallyDone =
                                       !isFullyDone && (topic.is_theory_done || topic.is_practice_done);
@@ -435,7 +435,7 @@ export const HSCSubjectAccordion: React.FC<HSCSubjectAccordionProps> = ({
 
                                     return (
                                       <tr
-                                        key={topic.id}
+                                        key={`${chapter.id}-${topic.id}-${topicIdx}`}
                                         className="hover:bg-[#eff4ff]/40 transition-colors"
                                       >
                                         <td className="py-3 px-3">

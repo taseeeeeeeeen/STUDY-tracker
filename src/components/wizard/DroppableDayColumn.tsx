@@ -128,9 +128,9 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
         )}
 
         {/* Render Cards */}
-        {cards.map((card) => (
+        {cards.map((card, idx) => (
           <DraggableTopicCard
-            key={card.id}
+            key={`${card.id}-day-${card.dayNumber || column.dayNumber}-${idx}`}
             card={card}
             isPastColumn={isPast}
             onCardClick={onCardClick}

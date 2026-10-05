@@ -265,7 +265,7 @@ export function performMidnightRollover(
               targetChapterCard.tag = `${targetChapterCard.topics.length} topics`;
             } else {
               const newChapterCard: BoardCard = {
-                id: `chapter-${chId}`,
+                id: `chapter-${chId}-day-${currentDay}`,
                 chapterId: chId,
                 chapterName: card.chapterName || card.title,
                 subject: card.subject,

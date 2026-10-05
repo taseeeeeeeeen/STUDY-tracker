@@ -159,7 +159,7 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
             </p>
           </div>
         ) : (
-          filteredTasks.map((task) => {
+          filteredTasks.map((task, taskIdx) => {
             const isCompleted = task.theoryCompleted && task.practiceCompleted;
             const isInProgress =
               !isCompleted && (task.theoryCompleted || task.practiceCompleted);
@@ -171,7 +171,7 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
             if (task.isLocked) {
               return (
                 <div
-                  key={task.id}
+                  key={`${task.id}-${taskIdx}`}
                   className="bg-[#eff4ff]/80 opacity-80 p-4 sm:p-5 rounded-2xl border border-[#c0c9c0]/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 select-none cursor-not-allowed transition-all"
                 >
                   <div className="flex items-start gap-4 min-w-0">
@@ -241,7 +241,7 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
             // RENDER ACTIVE / UNLOCKED STATE UI
             return (
               <div
-                key={task.id}
+                key={`${task.id}-${taskIdx}`}
                 className={`bg-white p-4 sm:p-5 rounded-2xl shadow-xs hover:shadow-sm border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                   task.isCarriedOver
                     ? 'border-red-400 ring-2 ring-red-400/25 bg-red-50/10'

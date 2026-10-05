@@ -493,7 +493,7 @@ export const SyllabusManager: React.FC = () => {
             </button>
           </div>
         ) : (
-          subjects.map((sub) => {
+          subjects.map((sub, subIdx) => {
             const isSubExpanded = expandedSubjectId === sub.id;
             const subTopicCount = sub.chapters.reduce(
               (acc, c) => acc + (c.topics?.length || 0),
@@ -502,7 +502,7 @@ export const SyllabusManager: React.FC = () => {
 
             return (
               <div
-                key={sub.id}
+                key={`${sub.id}-${subIdx}`}
                 className="rounded-2xl border border-[#c0c9c0]/40 bg-white overflow-hidden shadow-2xs transition-all"
               >
                 {/* Subject Header */}
@@ -571,12 +571,12 @@ export const SyllabusManager: React.FC = () => {
                         No chapters in this subject yet. Click &quot;+ Chapter&quot; above to add one.
                       </p>
                     ) : (
-                      sub.chapters.map((ch) => {
+                      sub.chapters.map((ch, chIdx) => {
                         const isChExpanded = expandedChapterId === ch.id;
 
                         return (
                           <div
-                            key={ch.id}
+                            key={`${sub.id}-${ch.id}-${chIdx}`}
                             className="rounded-xl border border-[#c0c9c0]/30 bg-white overflow-hidden shadow-3xs"
                           >
                             {/* Chapter Header */}
@@ -642,9 +642,9 @@ export const SyllabusManager: React.FC = () => {
                                     No topics added yet. Click &quot;+ Topic&quot; to add one.
                                   </p>
                                 ) : (
-                                  ch.topics.map((top) => (
+                                  ch.topics.map((top, topIdx) => (
                                     <div
-                                      key={top.id}
+                                      key={`${ch.id}-${top.id}-${topIdx}`}
                                       className="p-2.5 rounded-lg bg-white border border-[#c0c9c0]/30 flex items-center justify-between gap-3 text-xs"
                                     >
                                       <div className="flex-1 min-w-0">
