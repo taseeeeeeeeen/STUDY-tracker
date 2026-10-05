@@ -290,10 +290,12 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     <span className="px-2.5 py-0.5 rounded-full bg-[#e5eeff] text-[#0b1c30] text-xs font-bold font-mono flex items-center gap-1 border border-[#c0c9c0]/40">
                       <span>🥈</span> Rank #2
                     </span>
-                    <span className="text-xs text-[#006c49] font-semibold flex items-center gap-1 font-mono">
-                      <span className="material-symbols-outlined text-sm">local_fire_department</span>
-                      {rank2.streakDays}d
-                    </span>
+                    {rank2.streakDays > 0 && (
+                      <span className="text-xs text-[#006c49] font-semibold flex items-center gap-1 font-mono">
+                        <span className="material-symbols-outlined text-sm">local_fire_department</span>
+                        {rank2.streakDays}d
+                      </span>
+                    )}
                   </div>
 
                   <div className="relative mb-3">
@@ -356,10 +358,12 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold font-mono flex items-center gap-1 shadow-xs border border-amber-300">
                       <span>🏆</span> 1st Place
                     </span>
-                    <span className="text-xs text-[#ba1a1a] font-bold flex items-center gap-1 font-mono">
-                      <span className="material-symbols-outlined text-sm">local_fire_department</span>
-                      {rank1.streakDays}d Streak
-                    </span>
+                    {rank1.streakDays > 0 && (
+                      <span className="text-xs text-[#ba1a1a] font-bold flex items-center gap-1 font-mono">
+                        <span className="material-symbols-outlined text-sm">local_fire_department</span>
+                        {rank1.streakDays}d Streak
+                      </span>
+                    )}
                   </div>
 
                   <div className="relative mb-3">
@@ -421,10 +425,12 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                     <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 text-xs font-bold font-mono flex items-center gap-1 border border-amber-200">
                       <span>🥉</span> Rank #3
                     </span>
-                    <span className="text-xs text-[#006c49] font-semibold flex items-center gap-1 font-mono">
-                      <span className="material-symbols-outlined text-sm">local_fire_department</span>
-                      {rank3.streakDays}d
-                    </span>
+                    {rank3.streakDays > 0 && (
+                      <span className="text-xs text-[#006c49] font-semibold flex items-center gap-1 font-mono">
+                        <span className="material-symbols-outlined text-sm">local_fire_department</span>
+                        {rank3.streakDays}d
+                      </span>
+                    )}
                   </div>
 
                   <div className="relative mb-3">
@@ -595,17 +601,31 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
                             title="Click to view peer's syllabus progress"
                           >
                             <div className="relative">
-                              <img
-                                src={peer.avatarUrl}
-                                alt={peer.name}
-                                className={`w-9 h-9 rounded-full object-cover transition-transform group-hover:scale-105 ${
-                                  isRank1
-                                    ? 'ring-2 ring-amber-400'
-                                    : isUser
-                                    ? 'ring-2 ring-blue-500'
-                                    : 'border border-[#c0c9c0]/30'
-                                }`}
-                              />
+                              {peer.avatarUrl ? (
+                                <img
+                                  src={peer.avatarUrl}
+                                  alt={peer.name}
+                                  className={`w-9 h-9 rounded-full object-cover transition-transform group-hover:scale-105 ${
+                                    isRank1
+                                      ? 'ring-2 ring-amber-400'
+                                      : isUser
+                                      ? 'ring-2 ring-blue-500'
+                                      : 'border border-[#c0c9c0]/30'
+                                  }`}
+                                />
+                              ) : (
+                                <div
+                                  className={`w-9 h-9 rounded-full bg-[#003820] text-[#6ffbbe] flex items-center justify-center font-black text-xs transition-transform group-hover:scale-105 ${
+                                    isRank1
+                                      ? 'ring-2 ring-amber-400'
+                                      : isUser
+                                      ? 'ring-2 ring-blue-500'
+                                      : 'border border-[#c0c9c0]/30'
+                                  }`}
+                                >
+                                  {peer.name.slice(0, 2).toUpperCase()}
+                                </div>
+                              )}
                               {isUser && (
                                 <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
                               )}

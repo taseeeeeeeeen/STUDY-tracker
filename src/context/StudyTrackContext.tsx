@@ -20,7 +20,6 @@ import {
   findChallengeByCode,
   subscribeChallenge,
   isChallengeActive,
-  restartChallengeClock,
   updateChallengeDayAllocation,
   archiveChallenge,
   deleteFirestoreChallenge,
@@ -31,7 +30,7 @@ import {
   computeCurrentSprintDay,
   flattenAllocationToTopics,
 } from '../utils/challengeLogic';
-import { getLocalMidnightIso } from '../utils/dateUtils';
+import { getMidnightEndOfDay } from '../utils/dateUtils';
 import {
   subscribeUserProgress,
   subscribeMemberProgress,
@@ -113,28 +112,6 @@ const StudyTrackContext = createContext<StudyTrackContextType | undefined>(undef
 
 const ACTIVE_CHALLENGE_STORAGE_KEY = 'studytrack_active_challenge_id';
 
-const HSC_CORE_SUBJECTS = [
-  'Physics',
-  'Chemistry',
-  'Biology',
-  'Math',
-  'Bangla',
-  'English',
-  'ICT',
-] as const;
-
-function matchSubjectCategory(name: string): (typeof HSC_CORE_SUBJECTS)[number] | null {
-  const n = (name || '').toLowerCase();
-  if (n.includes('physics') || n.includes('ফিজিক্স')) return 'Physics';
-  if (n.includes('chem') || n.includes('কেমিস্ট্রি')) return 'Chemistry';
-  if (n.includes('bio') || n.includes('জীব')) return 'Biology';
-  if (n.includes('math') || n.includes('ম্যাথ') || n.includes('গণিত') || n.includes('calc')) return 'Math';
-  if (n.includes('bangla') || n.includes('বাংলা')) return 'Bangla';
-  if (n.includes('english') || n.includes('ইংরেজি')) return 'English';
-  if (n.includes('ict') || n.includes('তথ্য')) return 'ICT';
-  return null;
-}
-
 export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user } = useAuth();
 
@@ -189,13 +166,26 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   // Real-time clock for time-based locks (updates every 10s)
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerToast = (msg: string) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
+    }, 3500);
   };
 
-  const clearToast = () => setToastMessage(null);
+  const clearToast = () => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    setToastMessage(null);
+  };
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -285,6 +275,42 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     }
   }, [globalMasterSyllabus, userProgress]);
 
+function getTopicAllocatedDayMap(
+  challenge: FirestoreChallenge | null | undefined
+): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!challenge || !challenge.day_wise_allocation) return map;
+
+  Object.entries(challenge.day_wise_allocation).forEach(([dayKey, cards]) => {
+    const match = dayKey.match(/Day\s+(\d+)/i);
+    const dayNum = match ? parseInt(match[1], 10) : parseInt(dayKey.replace(/\D/g, ''), 10);
+    if (!dayNum || isNaN(dayNum)) return;
+
+    if (Array.isArray(cards)) {
+      cards.forEach((card: any) => {
+        if (card.id) {
+          const rawId = card.id;
+          const strippedId = card.id.replace(/^chapter-/, '');
+          map.set(rawId, Math.max(map.get(rawId) || 0, dayNum));
+          map.set(strippedId, Math.max(map.get(strippedId) || 0, dayNum));
+        }
+        if (card.chapterId) {
+          map.set(card.chapterId, Math.max(map.get(card.chapterId) || 0, dayNum));
+        }
+        if (Array.isArray(card.topics)) {
+          card.topics.forEach((t: any) => {
+            if (t.id) {
+              map.set(t.id, Math.max(map.get(t.id) || 0, dayNum));
+            }
+          });
+        }
+      });
+    }
+  });
+
+  return map;
+}
+
   // Real-Time Firestore onSnapshot Listener for Active Challenge
   useEffect(() => {
     if (!user || !activeChallengeId) {
@@ -332,14 +358,16 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
           ? (flattened[dayKey] || [])
           : dedupedSyllabus;
 
+        const allocatedDayMap = getTopicAllocatedDayMap(challengeDoc);
+
         const mappedTasks: Task[] = targetTopics.map((top: any, idx: number) => {
           const prog = userProgressRef.current[top.id] || { theory: false, practice: false };
 
-          // Replace hardcoded substring guessing with exact/prefix matching
-          const subjectStr = top.subject || 'Physics';
-          const sLower = subjectStr.toLowerCase().trim();
+          // Replace hardcoded substring guessing with exact/prefix matching; fallback to topic's own subject
+          const rawSubject = (top.subject || '').trim();
+          const sLower = rawSubject.toLowerCase();
           
-          let sub: string = subjectStr;
+          let sub: string = top.subject || rawSubject;
           if (sLower.startsWith('phys') || sLower.includes('ফিজিক্স')) sub = 'Physics';
           else if (sLower.startsWith('chem') || sLower.includes('কেমিস্ট্রি')) sub = 'Chemistry';
           else if (sLower.startsWith('math') || sLower.includes('গণিত')) sub = 'Math';
@@ -348,8 +376,14 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
           else if (sLower.startsWith('eng') || sLower.includes('ইংরেজি')) sub = 'English';
           else if (sLower.startsWith('ict') || sLower.includes('তথ্য')) sub = 'ICT';
 
-          const timeElapsed = Date.now() - challengeCreatedAt;
-          const isExpired = timeElapsed >= 24 * 60 * 60 * 1000;
+          const allocatedDay =
+            allocatedDayMap.get(top.id) ||
+            (top.chapterId ? allocatedDayMap.get(top.chapterId) : undefined) ||
+            challengeDoc.duration ||
+            7;
+          const cutoffMs = getMidnightEndOfDay(challengeDoc.start_date, allocatedDay);
+          const isExpired = !isNaN(cutoffMs) && Date.now() > cutoffMs;
+          const isCompleted = Boolean(prog.theory && prog.practice);
 
           return {
             id: top.id || `task-${idx + 1}`,
@@ -360,7 +394,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
             theoryCompleted: Boolean(prog.theory),
             practiceCompleted: Boolean(prog.practice),
             createdAt: challengeCreatedAt,
-            isLocked: isExpired && !(prog.theory && prog.practice),
+            isLocked: isExpired && !isCompleted,
             lockReason: isExpired ? 'Locked: 24-hour study completion window expired' : undefined,
             isCarriedOver: Boolean(top.isCarriedOver),
             carriedOverFromDay: top.carriedOverFromDay,
@@ -417,29 +451,52 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   // The active room for Peer Arena is the joined room, or the user's personal active challenge
   const roomChallenge = attachedRoomChallenge || activeChallenge;
 
+  // Stable set of participant uids (sorted, comma-joined)
+  const participantUids = useMemo(() => {
+    if (!roomChallenge?.participants) return '';
+    const uids = Array.from(
+      new Set(
+        roomChallenge.participants
+          .map((p) => p.uid)
+          .filter((uid): uid is string => Boolean(uid))
+      )
+    );
+    return uids.sort().join(',');
+  }, [roomChallenge?.participants]);
+
   // Real-Time onSnapshot Listener for all Room Challenge Members' personal progress
   useEffect(() => {
-    const targetChallenge = roomChallenge;
-    if (!targetChallenge || !targetChallenge.participants || targetChallenge.participants.length === 0) {
-      setMemberProgressMap({});
+    const currentUids = participantUids ? participantUids.split(',').filter(Boolean) : [];
+    const currentUidSet = new Set(currentUids);
+
+    // Clear memberProgressMap entries that are not in the current participant set
+    setMemberProgressMap((prev) => {
+      const next: Record<string, UserProgressDoc | null> = {};
+      for (const [uid, doc] of Object.entries(prev)) {
+        if (currentUidSet.has(uid)) {
+          next[uid] = doc;
+        }
+      }
+      return next;
+    });
+
+    if (currentUids.length === 0) {
       return;
     }
 
     const unsubs: (() => void)[] = [];
-    const participants = targetChallenge.participants;
 
-    for (const p of participants) {
-      if (!p.uid) continue;
+    for (const uid of currentUids) {
       const unsub = subscribeMemberProgress(
-        p.uid,
+        uid,
         (doc) => {
           setMemberProgressMap((prev) => ({
             ...prev,
-            [p.uid]: doc,
+            [uid]: doc,
           }));
         },
         (err) => {
-          console.warn(`Failed to subscribe to member progress for ${p.uid}:`, err);
+          console.warn(`Failed to subscribe to member progress for ${uid}:`, err);
         }
       );
       unsubs.push(unsub);
@@ -448,46 +505,75 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [roomChallenge]);
+  }, [participantUids]);
 
   // Sync tasks completion flags when userProgress updates
   useEffect(() => {
     setTasks((prevTasks) =>
       prevTasks.map((t) => {
         const prog = userProgress[t.id] || { theory: false, practice: false };
+        const theoryCompleted = Boolean(prog.theory);
+        const practiceCompleted = Boolean(prog.practice);
+        const isCompleted = theoryCompleted && practiceCompleted;
+
+        // Completed tasks (theory && practice) are never locked
+        const nextLocked = isCompleted ? false : t.isLocked;
+        const nextLockReason = isCompleted ? undefined : t.lockReason;
+
         if (
-          t.theoryCompleted === Boolean(prog.theory) &&
-          t.practiceCompleted === Boolean(prog.practice)
+          t.theoryCompleted === theoryCompleted &&
+          t.practiceCompleted === practiceCompleted &&
+          t.isLocked === nextLocked &&
+          t.lockReason === nextLockReason
         ) {
           return t;
         }
         return {
           ...t,
-          theoryCompleted: Boolean(prog.theory),
-          practiceCompleted: Boolean(prog.practice),
+          theoryCompleted,
+          practiceCompleted,
+          isLocked: nextLocked,
+          lockReason: nextLockReason,
         };
       })
     );
   }, [userProgress]);
 
-  // Time-based task locking logic (24h expiration from createdAt)
+  // Time-based task locking logic (day-aware expiration)
   useEffect(() => {
-    const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-    setTasks((prevTasks) =>
-      prevTasks.map((task) => {
-        const timeElapsed = currentTime - task.createdAt;
-        const hasExpired = timeElapsed >= TWENTY_FOUR_HOURS_MS;
-        if (hasExpired && !task.isLocked && !(task.theoryCompleted && task.practiceCompleted)) {
+    if (!activeChallenge || !activeChallenge.start_date) return;
+    const allocatedDayMap = getTopicAllocatedDayMap(activeChallenge);
+
+    setTasks((prevTasks) => {
+      let hasChanges = false;
+      const nextTasks = prevTasks.map((task) => {
+        const isCompleted = task.theoryCompleted && task.practiceCompleted;
+        const allocatedDay =
+          allocatedDayMap.get(task.id) ||
+          activeChallenge.duration ||
+          7;
+        const cutoffMs = getMidnightEndOfDay(activeChallenge.start_date, allocatedDay);
+        const hasExpired = !isNaN(cutoffMs) && currentTime > cutoffMs;
+
+        const nextLocked = hasExpired && !isCompleted;
+        const nextLockReason = hasExpired
+          ? (task.lockReason || 'Locked: 24-hour study completion window expired')
+          : undefined;
+
+        if (task.isLocked !== nextLocked || task.lockReason !== nextLockReason) {
+          hasChanges = true;
           return {
             ...task,
-            isLocked: true,
-            lockReason: task.lockReason || 'Locked: 24-hour study completion window expired',
+            isLocked: nextLocked,
+            lockReason: nextLockReason,
           };
         }
         return task;
-      })
-    );
-  }, [currentTime]);
+      });
+
+      return hasChanges ? nextTasks : prevTasks;
+    });
+  }, [currentTime, activeChallenge]);
 
   // Automatic midnight day-reset / rollover
   const isRollingOverRef = useRef(false);
@@ -534,11 +620,31 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     }
   }, [activeChallenge, userProgressDoc, currentTime, user]);
 
+  // Helper to verify if a task is persisted in the active challenge
+  const isTaskPersisted = (taskId: string): boolean => {
+    if (!activeChallenge) return false;
+    if (activeChallenge.selected_syllabus?.some((s) => s.id === taskId)) return true;
+    if (activeChallenge.day_wise_allocation) {
+      for (const cards of Object.values(activeChallenge.day_wise_allocation)) {
+        if (Array.isArray(cards)) {
+          for (const card of cards as any[]) {
+            if (!card) continue;
+            if (card.id === taskId || card.id === `card-${taskId}`) return true;
+            if (Array.isArray(card.topics) && card.topics.some((t: any) => t && t.id === taskId)) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+
   // Instantly update Firestore document on Theory or Practice toggle
   const toggleDashboardTheory = async (taskId: string) => {
-    if (!user) return;
+    if (!user || !activeChallenge) return;
     const targetTask = tasks.find((t) => t.id === taskId);
-    if (!targetTask || targetTask.isLocked) return;
+    if (!targetTask || targetTask.isLocked || !isTaskPersisted(taskId)) return;
 
     // Optimistic UI update
     const prevTasks = [...tasks];
@@ -567,9 +673,9 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   const toggleDashboardPractice = async (taskId: string) => {
-    if (!user) return;
+    if (!user || !activeChallenge) return;
     const targetTask = tasks.find((t) => t.id === taskId);
-    if (!targetTask || targetTask.isLocked) return;
+    if (!targetTask || targetTask.isLocked || !isTaskPersisted(taskId)) return;
 
     // Optimistic UI update
     const prevTasks = [...tasks];
@@ -598,7 +704,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   // HSC Syllabus Toggles (Now persisted to Firestore)
-  const toggleHSCTheory = async (subjectId: string, chapterId: string, topicId: string) => {
+  const toggleHSCTheory = async (_subjectId: string, _chapterId: string, topicId: string) => {
     if (!user) return;
 
     // Optimistic update
@@ -628,7 +734,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     }
   };
 
-  const toggleHSCPractice = async (subjectId: string, chapterId: string, topicId: string) => {
+  const toggleHSCPractice = async (_subjectId: string, _chapterId: string, topicId: string) => {
     if (!user) return;
 
     // Optimistic update
@@ -720,7 +826,45 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   const addDashboardTopic = (newTask: Omit<Task, 'id' | 'isLocked'>) => {
-    const id = `task-${Date.now()}`;
+    if (!user || !activeChallenge) return;
+
+    const currentSprintDay = computeCurrentSprintDay(
+      activeChallenge.start_date,
+      activeChallenge.duration,
+      currentTime
+    );
+    const dayKey = `Day ${currentSprintDay}`;
+    const id = (newTask as any).id || `topic-${Date.now()}`;
+
+    const newTopic = {
+      id,
+      title: newTask.title,
+      subconcept: newTask.description || `${newTask.subject} session`,
+      durationMinutes: newTask.durationMinutes || 45,
+      subject: newTask.subject,
+      theoryCompleted: false,
+      practiceCompleted: false,
+      isPriority: Boolean(newTask.isPriority),
+    };
+
+    const newCard = {
+      id,
+      title: newTask.title,
+      subconcept: newTask.description || `${newTask.subject} session`,
+      durationMinutes: newTask.durationMinutes || 45,
+      subject: newTask.subject,
+      topics: [newTopic],
+    };
+
+    const currentAllocation: Record<string, unknown[]> = {
+      ...(activeChallenge.day_wise_allocation || {}),
+    };
+    const todayCards = Array.isArray(currentAllocation[dayKey])
+      ? [...currentAllocation[dayKey]]
+      : [];
+    todayCards.push(newCard);
+    currentAllocation[dayKey] = todayCards;
+
     const task: Task = {
       ...newTask,
       id,
@@ -728,7 +872,25 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       createdAt: Date.now(),
     };
     setTasks((prev) => [task, ...prev]);
-    triggerToast(`Added topic: "${task.title}"`);
+    setActiveChallengeState({
+      ...activeChallenge,
+      day_wise_allocation: currentAllocation,
+    });
+
+    updateChallengeDayAllocation(
+      activeChallenge.challenge_id,
+      currentAllocation,
+      activeChallenge.start_date
+    )
+      .then(() => {
+        triggerToast(`Added topic: "${task.title}"`);
+      })
+      .catch((err) => {
+        console.error('Failed to persist added topic to challenge:', err);
+        setTasks((prev) => prev.filter((t) => t.id !== id));
+        setActiveChallengeState(activeChallenge);
+        triggerToast('Failed to save topic to challenge.');
+      });
   };
 
   // Join Challenge by Code (Room membership only - does NOT rewrite personal dashboard display source)
@@ -742,6 +904,21 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         return false;
       }
 
+      if (!isChallengeActive(challengeDoc)) {
+        triggerToast(`This challenge has ended.`);
+        return false;
+      }
+
+      const currentRoomId = attachedRoomId || attachedRoomChallenge?.challenge_id;
+      if (currentRoomId && currentRoomId !== challengeDoc.challenge_id) {
+        const currentRoomName = attachedRoomChallenge?.challenge_name || 'another challenge';
+        const targetRoomName = challengeDoc.challenge_name || cleanCode;
+        const confirmed = window.confirm(
+          `You are currently participating in "${currentRoomName}". Do you want to switch your Peer Arena membership to "${targetRoomName}"?`
+        );
+        if (!confirmed) return false;
+      }
+
       await joinFirestoreChallenge(challengeDoc.challenge_id, {
         uid: user.uid,
         name: user.name,
@@ -750,6 +927,15 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       });
 
       await addJoinedChallengeId(user.uid, challengeDoc.challenge_id);
+
+      // Persist the change to user_progress FIRST (await the write)
+      await updateActiveChallengeId(user.uid, challengeDoc.challenge_id);
+
+      // Settle path / fallback: update local state after write resolves so stale snapshot cannot revert
+      if (activeChallengeIdRef.current !== challengeDoc.challenge_id) {
+        setActiveChallengeId(challengeDoc.challenge_id);
+        localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, challengeDoc.challenge_id);
+      }
 
       setAttachedRoomId(challengeDoc.challenge_id);
       setAttachedRoomChallenge(challengeDoc);
@@ -763,12 +949,6 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   const setActiveChallenge = async (newChallenge: FirestoreChallenge) => {
-    setActiveChallengeId(newChallenge.challenge_id);
-    setActiveChallengeState(newChallenge);
-    setAttachedRoomId(null);
-    setAttachedRoomChallenge(null);
-    localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, newChallenge.challenge_id);
-    
     if (user) {
       try {
         await updateActiveChallengeId(user.uid, newChallenge.challenge_id);
@@ -776,6 +956,11 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         console.error('Failed to persist active challenge ID to user profile:', err);
       }
     }
+    setActiveChallengeId(newChallenge.challenge_id);
+    setActiveChallengeState(newChallenge);
+    setAttachedRoomId(null);
+    setAttachedRoomChallenge(null);
+    localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, newChallenge.challenge_id);
   };
 
   // Main Dashboard Calculations
@@ -794,9 +979,9 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     if (deduped.length === 0) return tasks;
     return deduped.map((top, idx) => {
       const prog = userProgress[top.id] || { theory: false, practice: false };
-      const subjectStr = top.subject || 'Physics';
-      const sLower = subjectStr.toLowerCase().trim();
-      let sub = subjectStr;
+      const rawSubject = (top.subject || '').trim();
+      const sLower = rawSubject.toLowerCase();
+      let sub = top.subject || rawSubject;
       if (sLower.startsWith('phys') || sLower.includes('ফিজিক্স')) sub = 'Physics';
       else if (sLower.startsWith('chem') || sLower.includes('কেমিস্ট্রি')) sub = 'Chemistry';
       else if (sLower.startsWith('math') || sLower.includes('গণিত')) sub = 'Math';
@@ -809,7 +994,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         id: top.id || `sprint-${idx + 1}`,
         subject: sub,
         title: top.title,
-        description: top.subconcept || `${top.subject} core problem set`,
+        description: top.subconcept || `${top.subject || sub} core problem set`,
         durationMinutes: top.durationMinutes || 45,
         theoryCompleted: Boolean(prog.theory),
         practiceCompleted: Boolean(prog.practice),
@@ -912,10 +1097,13 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
           return tp && tp.theory && tp.practice;
         }).length;
       } else {
-        // Fall back to stored participant fields
-        completedTopics = p.completed_topics || 0;
+        // Fall back to stored participant fields with consistent deduped denominator
         progressMap = p.topic_progress || {};
-        totalChallengeTopics = p.total_challenge_topics || totalSyllabusTopics;
+        completedTopics = dedupedSyllabus.filter((top) => {
+          const tp = progressMap[top.id];
+          return tp && tp.theory && tp.practice;
+        }).length;
+        totalChallengeTopics = totalSyllabusTopics;
       }
 
       // Determine active focus from first unfinished topic
@@ -930,6 +1118,36 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
 
       const velocity = Number((completedTopics / elapsedDays).toFixed(1));
 
+      // Derive peer completionLog (for current user, use local ref/doc; for other members, use liveDoc)
+      const peerLog = isCurrentUser
+        ? (completionLogRef.current || userProgressDoc?.completionLog)
+        : liveDoc?.completionLog;
+
+      let earliestActualCompletion: number | null = null;
+      if (peerLog) {
+        for (const entry of Object.values(peerLog)) {
+          if (entry) {
+            if (typeof entry.theory === 'number' && entry.theory > 0) {
+              if (earliestActualCompletion === null || entry.theory < earliestActualCompletion) {
+                earliestActualCompletion = entry.theory;
+              }
+            }
+            if (typeof entry.practice === 'number' && entry.practice > 0) {
+              if (earliestActualCompletion === null || entry.practice < earliestActualCompletion) {
+                earliestActualCompletion = entry.practice;
+              }
+            }
+          }
+        }
+      }
+
+      const effectiveCompletionTimestamp =
+        earliestActualCompletion !== null
+          ? earliestActualCompletion
+          : (p.last_completion_timestamp || 0);
+
+      const peerStreak = peerLog ? computeStreakDays(peerLog, Date.now()) : 0;
+
       return {
         id: p.uid,
         uid: p.uid,
@@ -941,16 +1159,17 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         activeFocus,
         completed_topics: completedTopics,
         total_challenge_topics: totalChallengeTopics,
-        last_completion_timestamp: p.last_completion_timestamp || 0,
+        last_completion_timestamp: effectiveCompletionTimestamp,
+        earliest_completion_timestamp: effectiveCompletionTimestamp,
         topic_progress: progressMap,
         velocityPerDay: Math.max(0, velocity),
-        streakDays: Math.min(Math.ceil(elapsedDays), Math.max(0, Math.ceil(completedTopics))),
+        streakDays: peerStreak,
         rankTrend: 0,
         isCurrentUser,
         isSquad: true,
       };
     });
-  }, [roomChallenge, user, memberProgressMap]);
+  }, [roomChallenge, user, memberProgressMap, userProgressDoc]);
 
   // Peer Arena Sorting Algorithm & Tie-Breaker Math
   const sortedPeers = useMemo(() => {
@@ -967,7 +1186,9 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       if (Math.abs(b.scorePercent - a.scorePercent) > 0.0001) {
         return b.scorePercent - a.scorePercent;
       }
-      return a.last_completion_timestamp - b.last_completion_timestamp;
+      const aTime = a.earliest_completion_timestamp ?? a.last_completion_timestamp;
+      const bTime = b.earliest_completion_timestamp ?? b.last_completion_timestamp;
+      return aTime - bTime;
     });
 
     return listWithScore.map((peer, index) => ({
@@ -1065,7 +1286,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     streakDays
   ]);
 
-  // Reset active challenge (wipe personal DB progress for sprint scope + restart clock)
+  // Reset active challenge (wipe personal DB progress for sprint scope)
   const resettingRef = useRef(false);
   const resetActiveChallenge = async () => {
     if (resettingRef.current) return;
@@ -1077,9 +1298,8 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       const topicIds = deduped.map((t) => t.id);
 
       await resetTopicsProgress(user.uid, topicIds);
-      await restartChallengeClock(activeChallenge.challenge_id, getLocalMidnightIso(new Date()));
 
-      triggerToast('Challenge reset. Day 1 starts now.');
+      triggerToast('Challenge progress reset.');
     } catch (err) {
       console.error('Failed to reset active challenge:', err);
       triggerToast('Failed to reset challenge. Please try again.');

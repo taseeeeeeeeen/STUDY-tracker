@@ -1,9 +1,7 @@
 import {
   doc,
-  getDoc,
   setDoc,
   onSnapshot,
-  updateDoc,
   runTransaction,
   Unsubscribe,
 } from 'firebase/firestore';
@@ -51,8 +49,12 @@ export async function addJoinedChallengeId(uid: string, challengeId: string): Pr
       if (!snap.exists()) {
         transaction.set(userDocRef, {
           uid,
+          name: auth.currentUser?.displayName || 'Student',
+          email: auth.currentUser?.email || '',
+          role: 'user',
           joinedChallengeIds: [challengeId],
           lastLoginAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
         });
         return;
       }
@@ -68,6 +70,35 @@ export async function addJoinedChallengeId(uid: string, challengeId: string): Pr
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
+  }
+}
+
+function logSnapshotError(error: unknown, operationType: OperationType, path: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: string })?.code;
+
+  const errInfo = {
+    error: message,
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
+    },
+    operationType,
+    path,
+  };
+
+  if (code === 'unavailable' || message.includes('offline')) {
+    console.warn('Firestore Connectivity Issue: ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
   }
 }
 
@@ -93,7 +124,7 @@ export function subscribeUserProgress(
     },
     (err) => {
       if (onError) onError(err);
-      handleFirestoreError(err, OperationType.GET, `${COLLECTION_NAME}/${uid}`);
+      logSnapshotError(err, OperationType.GET, `${COLLECTION_NAME}/${uid}`);
     }
   );
 }
@@ -168,7 +199,8 @@ export async function setUserTopicProgress(
 }
 
 /**
- * Backward-compatible wrapper calling setUserTopicProgress with !current value.
+ * Atomic toggle inside a single Firestore transaction:
+ * Reads latest document state, flips the target flag (!current), and writes the flag and completionLog.
  */
 export async function toggleUserTopicProgress(
   uid: string,
@@ -177,10 +209,61 @@ export async function toggleUserTopicProgress(
 ): Promise<void> {
   const docRef = doc(db, COLLECTION_NAME, uid);
   try {
-    const snap = await getDoc(docRef);
-    const data = snap.exists() ? (snap.data() as UserProgressDoc) : null;
-    const currentVal = Boolean(data?.topicProgress?.[topicId]?.[type]);
-    await setUserTopicProgress(uid, topicId, type, !currentVal);
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(docRef);
+      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+
+      if (!snap.exists()) {
+        const nextValue = true;
+        const initialDoc: UserProgressDoc = {
+          uid,
+          topicProgress: {
+            [topicId]: {
+              theory: type === 'theory' ? nextValue : false,
+              practice: type === 'practice' ? nextValue : false,
+            },
+          },
+          completionLog: {
+            [topicId]: {
+              theory: type === 'theory' ? nowMs : null,
+              practice: type === 'practice' ? nowMs : null,
+            },
+          },
+          updatedAt: nowIso,
+        };
+        transaction.set(docRef, initialDoc);
+      } else {
+        const data = snap.data() as UserProgressDoc;
+        const currentTopicProg = data.topicProgress?.[topicId] || {
+          theory: false,
+          practice: false,
+        };
+        const currentLog = data.completionLog?.[topicId] || {
+          theory: null,
+          practice: null,
+        };
+
+        const currentVal = Boolean(currentTopicProg[type]);
+        const nextValue = !currentVal;
+
+        const updatedTopicProg = {
+          ...currentTopicProg,
+          [type]: nextValue,
+        };
+
+        const updatedLog = {
+          ...currentLog,
+          [type]: nextValue ? nowMs : null,
+        };
+
+        transaction.update(docRef, {
+          [`topicProgress.${topicId}`]: updatedTopicProg,
+          [`completionLog.${topicId}`]: updatedLog,
+          updatedAt: nowIso,
+        });
+      }
+    });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
   }
@@ -254,16 +337,6 @@ export async function setUserTopicProgressBatch(
 }
 
 /**
- * Refactored saveBatchUserTopicProgress pointing to setUserTopicProgressBatch.
- */
-export async function saveBatchUserTopicProgress(
-  uid: string,
-  updates: Record<string, UserTopicProgress>
-): Promise<void> {
-  return setUserTopicProgressBatch(uid, updates);
-}
-
-/**
  * Live-read subscription for ROOM displays (any signed-in member's doc).
  */
 export function subscribeMemberProgress(
@@ -288,7 +361,7 @@ export function subscribeMemberProgress(
     },
     (err) => {
       if (onError) onError(err);
-      handleFirestoreError(err, OperationType.GET, `${COLLECTION_NAME}/${uid}`);
+      logSnapshotError(err, OperationType.GET, `${COLLECTION_NAME}/${uid}`);
     }
   );
 }

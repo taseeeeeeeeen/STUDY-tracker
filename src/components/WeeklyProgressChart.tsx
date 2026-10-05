@@ -18,7 +18,6 @@ export const WeeklyProgressChart: React.FC<WeeklyProgressChartProps> = ({
   const overallPercentage = totalTopics > 0 ? Math.round((totalDone / totalTopics) * 100) : 0;
 
   // Chart layout geometry
-  const chartHeight = 160;
   const baselineY = 125;
   const maxBarHeight = 90;
   // Maximum possible value for scale normalization

@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
     }
 
     function incoming() {
@@ -23,7 +23,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email == 'ahmedtaseen008@gmail.com' && request.auth.token.email_verified == true) ||
+        ((request.auth.token.email == 'ahmedtaseen008@gmail.com' || request.auth.token.email == 'ahmedmubintaseen@gmail.com') && request.auth.token.email_verified == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
@@ -65,11 +65,14 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && incoming().uid == request.auth.uid && (
         incoming().role == 'user' ||
-        (incoming().role == 'admin' && request.auth.token.email == 'ahmedtaseen008@gmail.com' && request.auth.token.email_verified == true)
+        (incoming().role == 'admin' && (request.auth.token.email == 'ahmedtaseen008@gmail.com' || request.auth.token.email == 'ahmedmubintaseen@gmail.com') && request.auth.token.email_verified == true)
       );
-      allow update: if isValidId(userId) && isValidUser(incoming()) && incoming().uid == existing().uid && (
-        isAdmin() ||
-        (isOwner(userId) && incoming().role == existing().role)
+      allow update: if isValidId(userId) && (
+        ((isOwner(userId) || isAdmin()) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'photoURL'])) ||
+        (isValidUser(incoming()) && incoming().uid == existing().uid && (
+          isAdmin() ||
+          (isOwner(userId) && incoming().role == existing().role)
+        ))
       );
       allow delete: if isValidId(userId) && isAdmin();
     }

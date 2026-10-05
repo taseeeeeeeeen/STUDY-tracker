@@ -43,7 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // User does not exist in 'users' collection -> Create new record
         const newUser: AppUser = {
           uid: fbUser.uid,
-          name: fbUser.displayName || 'Taseen Ahmed',
+          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Student',
           email: fbUser.email || '',
           photoURL: fbUser.photoURL || '',
           role: assignedRole,
@@ -77,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           return {
             ...existingData,
-            name: existingData.name || fbUser.displayName || 'Taseen Ahmed',
+            name: existingData.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Student',
             role: 'admin',
             lastLoginAt: nowIso,
             createdAt: existingData.createdAt || nowIso,
@@ -94,7 +94,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           return {
             ...existingData,
-            name: existingData.name || fbUser.displayName || 'Taseen Ahmed',
+            name: existingData.name || fbUser.displayName || fbUser.email?.split('@')[0] || 'Student',
             role: existingData.role || (isAdminCandidate ? 'admin' : 'user'),
             lastLoginAt: nowIso,
             createdAt: existingData.createdAt || nowIso,
@@ -107,7 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Firestore is offline, using fallback user profile.');
         return {
           uid: fbUser.uid,
-          name: fbUser.displayName || 'Taseen Ahmed',
+          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Student',
           email: fbUser.email || '',
           photoURL: fbUser.photoURL || '',
           role: assignedRole,
@@ -133,7 +133,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Fallback user state so app remains accessible
           setUser({
             uid: fbUser.uid,
-            name: fbUser.displayName || 'Taseen Ahmed',
+            name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Student',
             email: fbUser.email || '',
             photoURL: fbUser.photoURL || '',
             role: isAdminEmail(fbUser.email) ? 'admin' : 'user',

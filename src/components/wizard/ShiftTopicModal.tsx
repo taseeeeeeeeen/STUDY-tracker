@@ -21,12 +21,13 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
   onConfirmShift,
 }) => {
   // Allow shifting to ANY active day >= currentDay, excluding the chapter's current day
-  const selectableDays = columns.filter(
+  const futureDays = columns.filter(
     (col) => col.dayNumber >= currentDay && col.dayNumber !== card?.dayNumber
   );
+  const selectableDays = futureDays;
 
   const [selectedDay, setSelectedDay] = useState<number>(
-    selectableDays.length > 0 ? selectableDays[0].dayNumber : currentDay
+    futureDays.length > 0 ? futureDays[0].dayNumber : (card?.dayNumber ?? currentDay)
   );
   const [autoBalance, setAutoBalance] = useState(true);
   const [overrideCapacity, setOverrideCapacity] = useState(false);
@@ -46,20 +47,23 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
 
   // Update selected day whenever the modal opens or card changes
   useEffect(() => {
-    if (selectableDays.length > 0) {
+    if (futureDays.length > 0) {
       // If card is on a future day, default to today or next
       const defaultDay =
         card && card.dayNumber > currentDay
           ? currentDay
-          : selectableDays.find((d) => d.dayNumber > (card?.dayNumber || 0))?.dayNumber ||
-            selectableDays[0].dayNumber;
+          : futureDays.find((d) => d.dayNumber > (card?.dayNumber || 0))?.dayNumber ||
+            futureDays[0].dayNumber;
       setSelectedDay(defaultDay);
+    } else {
+      setSelectedDay(card?.dayNumber ?? currentDay);
     }
   }, [card, currentDay, isOpen]);
 
   if (!isOpen || !card) return null;
 
   const handleConfirm = () => {
+    if (futureDays.length === 0 || selectedDay === card.dayNumber) return;
     onConfirmShift(card.id, Number(selectedDay));
     onClose();
   };
@@ -122,9 +126,9 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
               </span>
             </label>
 
-            {selectableDays.length === 0 ? (
+            {futureDays.length === 0 ? (
               <div className="p-3 bg-[#ffdad6]/60 border border-[#ba1a1a]/30 rounded-xl text-[#93000a] text-xs">
-                No alternative days available for shifting in this sprint.
+                No future days available for shifting in this sprint.
               </div>
             ) : (
               <div className="relative">
@@ -222,7 +226,7 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
           </button>
           <button
             type="button"
-            disabled={selectableDays.length === 0 || (isOverCapacity && !overrideCapacity)}
+            disabled={futureDays.length === 0 || selectedDay === card.dayNumber || (isOverCapacity && !overrideCapacity)}
             onClick={handleConfirm}
             className="px-5 py-2 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >

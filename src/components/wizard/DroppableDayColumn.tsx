@@ -10,15 +10,19 @@ interface DroppableDayColumnProps {
   activeCard: BoardCard | null;
   onCardClick: (card: BoardCard) => void;
   isBoardLocked?: boolean;
+  onRemoveTopic?: (topicId: string, topicTitle?: string) => void;
+  onRemoveCard?: (card: BoardCard) => void;
 }
 
 export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
   column,
   cards,
   currentDay,
-  activeCard,
+  activeCard: _activeCard,
   onCardClick,
   isBoardLocked = false,
+  onRemoveTopic,
+  onRemoveCard,
 }) => {
   const isPast = column.dayNumber < currentDay;
   const isToday = column.dayNumber === currentDay;
@@ -131,6 +135,8 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
             isPastColumn={isPast}
             onCardClick={onCardClick}
             isBoardLocked={isBoardLocked}
+            onRemoveTopic={onRemoveTopic}
+            onRemoveCard={onRemoveCard}
           />
         ))}
 

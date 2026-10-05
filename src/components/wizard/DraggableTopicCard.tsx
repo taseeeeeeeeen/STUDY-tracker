@@ -8,6 +8,8 @@ interface DraggableTopicCardProps {
   isPastColumn: boolean;
   onCardClick: (card: BoardCard) => void;
   isBoardLocked?: boolean;
+  onRemoveTopic?: (topicId: string, topicTitle?: string) => void;
+  onRemoveCard?: (card: BoardCard) => void;
 }
 
 export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
@@ -15,6 +17,8 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
   isPastColumn,
   onCardClick,
   isBoardLocked = false,
+  onRemoveTopic,
+  onRemoveCard,
 }) => {
   // Collapsed by default showing just the chapter header
   const [isExpanded, setIsExpanded] = useState(false);
@@ -162,6 +166,35 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
               {isBoardLocked ? 'lock' : 'swap_horiz'}
             </span>
           </button>
+
+          {/* Remove Card Action Button */}
+          {onRemoveCard && (
+            <button
+              type="button"
+              disabled={isBoardLocked}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isBoardLocked) {
+                  onRemoveCard(card);
+                }
+              }}
+              className={`p-1 rounded-md transition-colors ${
+                isBoardLocked
+                  ? 'text-[#c0c9c0] cursor-not-allowed'
+                  : 'text-[#707971] hover:text-[#ba1a1a] hover:bg-red-50 cursor-pointer'
+              }`}
+              title={
+                isBoardLocked
+                  ? 'Save challenge first to unlock removing'
+                  : `Remove "${card.chapterName || card.title}" from sprint`
+              }
+            >
+              <span className="material-symbols-outlined text-sm leading-none">
+                delete
+              </span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -220,6 +253,27 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
                 <span className="font-mono text-[10px] text-[#707971]">
                   {top.durationMinutes}m
                 </span>
+                {onRemoveTopic && (
+                  <button
+                    type="button"
+                    disabled={isBoardLocked}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!isBoardLocked) {
+                        onRemoveTopic(top.id, top.title);
+                      }
+                    }}
+                    className={`p-0.5 rounded transition-colors ${
+                      isBoardLocked
+                        ? 'text-[#c0c9c0] cursor-not-allowed'
+                        : 'text-[#707971] hover:text-[#ba1a1a] hover:bg-red-50 cursor-pointer'
+                    }`}
+                    title={`Remove "${top.title}" from sprint`}
+                  >
+                    <span className="material-symbols-outlined text-xs leading-none">close</span>
+                  </button>
+                )}
               </div>
             </div>
           ))}

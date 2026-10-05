@@ -1,7 +1,6 @@
 import {
   collection,
   doc,
-  getDoc,
   getDocs,
   setDoc,
   updateDoc,
@@ -73,6 +72,35 @@ export async function createFirestoreChallenge(
   }
 }
 
+function logSnapshotError(error: unknown, operationType: OperationType, path: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: string })?.code;
+
+  const errInfo = {
+    error: message,
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
+    },
+    operationType,
+    path,
+  };
+
+  if (code === 'unavailable' || message.includes('offline')) {
+    console.warn('Firestore Connectivity Issue: ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
+}
+
 export function subscribeChallenge(
   challengeId: string,
   onData: (challenge: FirestoreChallenge | null) => void,
@@ -94,7 +122,7 @@ export function subscribeChallenge(
     },
     (err) => {
       if (onError) onError(err);
-      handleFirestoreError(err, OperationType.GET, `${COLLECTION_NAME}/${challengeId}`);
+      logSnapshotError(err, OperationType.GET, `${COLLECTION_NAME}/${challengeId}`);
     }
   );
 }
@@ -123,106 +151,54 @@ export async function joinFirestoreChallenge(
 ): Promise<FirestoreChallenge> {
   const challengeRef = doc(db, COLLECTION_NAME, challengeId);
   try {
-    const snap = await getDoc(challengeRef);
-    if (!snap.exists()) {
-      throw new Error(`Challenge with ID ${challengeId} not found.`);
-    }
-
-    const currentChallenge = snap.data() as FirestoreChallenge;
-    const existingIndex = currentChallenge.participants.findIndex(
-      (p) => p.uid === user.uid
-    );
-
-    if (existingIndex !== -1) {
-      // User is already a participant
-      return currentChallenge;
-    }
-
-    const newParticipant: ChallengeParticipant = {
-      uid: user.uid,
-      name: user.name,
-      email: user.email,
-      photoURL: user.photoURL,
-      completed_topics: 0,
-      total_challenge_topics: currentChallenge.selected_syllabus?.length || 0,
-      last_completion_timestamp: Date.now(),
-      joined_at: new Date().toISOString(),
-    };
-
-    const updatedParticipants = [...currentChallenge.participants, newParticipant];
-
-    await updateDoc(challengeRef, {
-      participants: updatedParticipants,
-      updatedAt: new Date().toISOString(),
-    });
-
-    return {
-      ...currentChallenge,
-      participants: updatedParticipants,
-    };
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
-  }
-}
-
-export async function toggleTopicProgressInChallenge(
-  challengeId: string,
-  uid: string,
-  topicId: string,
-  type: 'theory' | 'practice'
-): Promise<void> {
-  const challengeRef = doc(db, COLLECTION_NAME, challengeId);
-  try {
-    await runTransaction(db, async (transaction) => {
+    return await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(challengeRef);
-      if (!snap.exists()) return;
-
-      const challengeData = snap.data() as FirestoreChallenge;
-      const participants = [...challengeData.participants];
-      let participantIndex = participants.findIndex((p) => p.uid === uid);
-
-      if (participantIndex === -1) {
-        // If user wasn't registered in participants array yet, create initial entry
-        const newPart: ChallengeParticipant = {
-          uid,
-          name: 'Student',
-          completed_topics: 0,
-          total_challenge_topics: challengeData.selected_syllabus?.length || 0,
-          last_completion_timestamp: Date.now(),
-          joined_at: new Date().toISOString(),
-        };
-        participants.push(newPart);
-        participantIndex = participants.length - 1;
+      if (!snap.exists()) {
+        throw new Error(`Challenge with ID ${challengeId} not found.`);
       }
 
-      const participant = { ...participants[participantIndex] };
-      const currentProgress = { ...(participant.topic_progress || {}) };
-      const topicState = currentProgress[topicId] || { theory: false, practice: false };
+      const currentChallenge = snap.data() as FirestoreChallenge;
+      const existingIndex = currentChallenge.participants.findIndex(
+        (p) => p.uid === user.uid
+      );
 
-      // Toggle target state
-      const nextState = {
-        ...topicState,
-        [type]: !topicState[type],
+      if (existingIndex !== -1) {
+        // User is already a participant (skip idempotently)
+        return currentChallenge;
+      }
+
+      const initialTopicProgress: Record<string, ParticipantTopicProgress> = {};
+      if (Array.isArray(currentChallenge.selected_syllabus)) {
+        currentChallenge.selected_syllabus.forEach((s) => {
+          if (s.id) {
+            initialTopicProgress[s.id] = { theory: false, practice: false };
+          }
+        });
+      }
+
+      const newParticipant: ChallengeParticipant = {
+        uid: user.uid,
+        name: user.name,
+        email: user.email,
+        photoURL: user.photoURL,
+        completed_topics: 0,
+        total_challenge_topics: currentChallenge.selected_syllabus?.length || 0,
+        last_completion_timestamp: Date.now(),
+        topic_progress: initialTopicProgress,
+        joined_at: new Date().toISOString(),
       };
-      currentProgress[topicId] = nextState;
-      participant.topic_progress = currentProgress;
 
-      // Recalculate completed topics count
-      // Each topic has weight 2: Theory = 1 pt, Practice = 1 pt (Total 2 pts)
-      let totalPoints = 0;
-      Object.values(currentProgress).forEach((prog) => {
-        if (prog.theory) totalPoints += 1;
-        if (prog.practice) totalPoints += 1;
-      });
-
-      participant.completed_topics = totalPoints / 2;
-      participant.last_completion_timestamp = Date.now();
-      participants[participantIndex] = participant;
+      const updatedParticipants = [...currentChallenge.participants, newParticipant];
 
       transaction.update(challengeRef, {
-        participants,
+        participants: updatedParticipants,
         updatedAt: new Date().toISOString(),
       });
+
+      return {
+        ...currentChallenge,
+        participants: updatedParticipants,
+      };
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
@@ -244,6 +220,48 @@ export async function updateChallengeDayAllocation(
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
   }
+}
+
+export async function updateChallengeSyllabus(
+  challengeId: string,
+  selectedSyllabus: FirestoreChallenge['selected_syllabus'],
+  participants: ChallengeParticipant[],
+  dayWiseAllocation?: Record<string, unknown[]>
+): Promise<void> {
+  const challengeRef = doc(db, COLLECTION_NAME, challengeId);
+  try {
+    const updateData: Record<string, unknown> = {
+      selected_syllabus: selectedSyllabus,
+      participants,
+      updatedAt: new Date().toISOString(),
+    };
+    if (dayWiseAllocation) {
+      updateData.day_wise_allocation = dayWiseAllocation;
+    }
+    await updateDoc(challengeRef, updateData);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
+  }
+}
+
+export async function removeTopicFromChallenge(
+  challengeId: string,
+  topicId: string,
+  currentSyllabus: FirestoreChallenge['selected_syllabus'],
+  currentParticipants: ChallengeParticipant[],
+  dayWiseAllocation?: Record<string, unknown[]>
+): Promise<void> {
+  const updatedSyllabus = currentSyllabus.filter((item) => item.id !== topicId);
+  const updatedParticipants = currentParticipants.map((p) => ({
+    ...p,
+    total_challenge_topics: updatedSyllabus.length,
+  }));
+  return updateChallengeSyllabus(
+    challengeId,
+    updatedSyllabus,
+    updatedParticipants,
+    dayWiseAllocation
+  );
 }
 
 export async function restartChallengeClock(

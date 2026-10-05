@@ -10,6 +10,7 @@ export interface PeerContender {
   completed_topics: number;
   total_challenge_topics: number;
   last_completion_timestamp: number; // Unix timestamp in ms
+  earliest_completion_timestamp?: number;
   velocityPerDay: number;
   streakDays: number;
   isCurrentUser?: boolean;

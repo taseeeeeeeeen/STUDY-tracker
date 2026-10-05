@@ -1,7 +1,6 @@
 import {
   collection,
   doc,
-  getDocs,
   setDoc,
   deleteDoc,
   onSnapshot,
@@ -12,19 +11,32 @@ import { DEFAULT_HSC_SYLLABUS, parseAndNormalizeSyllabus } from '../data/default
 
 const COLLECTION_NAME = 'master_syllabus';
 
-export async function fetchMasterSyllabus(): Promise<MasterSubject[]> {
-  if (!auth.currentUser) {
-    return DEFAULT_HSC_SYLLABUS;
-  }
-  try {
-    const snap = await getDocs(collection(db, COLLECTION_NAME));
-    const subjects: MasterSubject[] = [];
-    snap.forEach((d) => {
-      subjects.push(d.data() as MasterSubject);
-    });
-    return subjects.sort((a, b) => a.order - b.order);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.LIST, COLLECTION_NAME);
+function logSnapshotError(error: unknown, operationType: OperationType, path: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: string })?.code;
+
+  const errInfo = {
+    error: message,
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
+    },
+    operationType,
+    path,
+  };
+
+  if (code === 'unavailable' || message.includes('offline')) {
+    console.warn('Firestore Connectivity Issue: ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
   }
 }
 
@@ -49,7 +61,7 @@ export function subscribeMasterSyllabus(
     },
     (err) => {
       if (onError) onError(err);
-      handleFirestoreError(err, OperationType.LIST, COLLECTION_NAME);
+      logSnapshotError(err, OperationType.LIST, COLLECTION_NAME);
     }
   );
 }

@@ -22,6 +22,35 @@ export async function upsertMyWeeklySnapshot(snapshot: WeeklySnapshot): Promise<
   }
 }
 
+function logSnapshotError(error: unknown, operationType: OperationType, path: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: string })?.code;
+
+  const errInfo = {
+    error: message,
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
+    },
+    operationType,
+    path,
+  };
+
+  if (code === 'unavailable' || message.includes('offline')) {
+    console.warn('Firestore Connectivity Issue: ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
+}
+
 export function subscribeWeeklySnapshots(
   weekKey: string,
   onData: (snapshots: WeeklySnapshot[]) => void,
@@ -45,7 +74,7 @@ export function subscribeWeeklySnapshots(
     },
     (err) => {
       if (onError) onError(err);
-      handleFirestoreError(err, OperationType.LIST, COLLECTION_NAME);
+      logSnapshotError(err, OperationType.LIST, COLLECTION_NAME);
     }
   );
 }

@@ -126,6 +126,16 @@ export const AppLayout: React.FC = () => {
               <span>Study Mode</span>
             </button>
 
+            {/* Mobile Study Mode Button */}
+            <button
+              onClick={() => setIsStudyModeOpen(true)}
+              className="sm:hidden flex items-center justify-center p-2 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white transition-colors cursor-pointer"
+              title="Study Mode"
+              aria-label="Study Mode"
+            >
+              <Zap className="w-3.5 h-3.5 text-[#6ffbbe]" />
+            </button>
+
             {/* Admin Quick Link if admin */}
             {isAdmin && (
               <Link
