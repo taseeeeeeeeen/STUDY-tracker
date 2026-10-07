@@ -19,6 +19,7 @@ export interface UserProgressDoc {
   updatedAt: string;
   peerCode?: string;
   savedSyllabusIds?: string[];
+  hiddenSubjectIds?: string[];
   completionLog?: Record<string, { theory: number | null; practice: number | null }>;
 }
 
@@ -399,3 +400,60 @@ export async function resetTopicsProgress(
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
   }
 }
+
+/**
+ * Toggles hiding a master subject for the current user in user_progress
+ */
+export async function toggleHideSubject(uid: string, subjectId: string): Promise<void> {
+  const docRef = doc(db, COLLECTION_NAME, uid);
+  try {
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(docRef);
+      const nowIso = new Date().toISOString();
+      if (!snap.exists()) {
+        const initialDoc: UserProgressDoc = {
+          uid,
+          topicProgress: {},
+          hiddenSubjectIds: [subjectId],
+          updatedAt: nowIso,
+        };
+        transaction.set(docRef, initialDoc);
+        return;
+      }
+
+      const data = snap.data() as UserProgressDoc;
+      const currentHidden = Array.isArray(data.hiddenSubjectIds) ? data.hiddenSubjectIds : [];
+      const nextHidden = currentHidden.includes(subjectId)
+        ? currentHidden.filter((id) => id !== subjectId)
+        : [...currentHidden, subjectId];
+
+      transaction.update(docRef, {
+        hiddenSubjectIds: nextHidden,
+        updatedAt: nowIso,
+      });
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
+  }
+}
+
+/**
+ * Sets the complete list of hidden subject IDs for the user in user_progress
+ */
+export async function setHiddenSubjectIds(uid: string, hiddenIds: string[]): Promise<void> {
+  const docRef = doc(db, COLLECTION_NAME, uid);
+  try {
+    await setDoc(
+      docRef,
+      {
+        uid,
+        hiddenSubjectIds: hiddenIds,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
+  }
+}
+

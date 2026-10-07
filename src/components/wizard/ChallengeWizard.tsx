@@ -28,7 +28,7 @@ import {
   deleteFirestoreChallenge,
 } from '../../services/challengeService';
 import { FirestoreChallenge } from '../../types/challenge';
-import { dedupeSyllabusTopics } from '../../utils/challengeLogic';
+import { dedupeSyllabusTopics, balanceCardsAcrossDays } from '../../utils/challengeLogic';
 import {
   getLocalDateString,
   parseLocalDate,
@@ -123,15 +123,30 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   const { user, isAdmin } = useAuth();
   const { activeChallenge, setActiveChallenge, currentTime } = useStudyTrack();
 
+  // 3-Step Wizard Flow State: 1 = Config, 2 = Topics, 3 = Schedule
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
+
   const initialChallenge =
     activeChallenge && activeChallenge.status !== 'archived' ? activeChallenge : null;
   const initialRestored = initialChallenge?.day_wise_allocation
     ? parseCardsFromAllocation(initialChallenge.day_wise_allocation as Record<string, unknown[]>)
     : { cards: [], order: [] };
 
-  // STEP 1: Duration selection (7 or 30 days, null by default - Task 3.2)
+  // STEP 1: Duration selection (7, 14, 21, 30 or custom 5-60 days)
   const [duration, setDuration] = useState<SprintDuration | null>(
     (initialChallenge?.duration as SprintDuration) || null
+  );
+  const [isCustomDuration, setIsCustomDuration] = useState<boolean>(
+    Boolean(
+      initialChallenge?.duration &&
+        ![7, 14, 21, 30].includes(Number(initialChallenge.duration))
+    )
+  );
+  const [customDurationInput, setCustomDurationInput] = useState<string>(
+    initialChallenge?.duration &&
+      ![7, 14, 21, 30].includes(Number(initialChallenge.duration))
+      ? String(initialChallenge.duration)
+      : ''
   );
   const [challengeName, setChallengeName] = useState(initialChallenge?.challenge_name || '');
   const [startDate, setStartDate] = useState<string | null>(
@@ -161,9 +176,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     return `${year}-${month}-${day}`;
   }, []);
 
-  // Dynamic Day Columns based on duration and startDate in user's local timezone
+  // Dynamic Day Columns based on duration and startDate in user's local timezone - no fallback to 7
   const columns: DayColumnData[] = useMemo(() => {
-    const numDays = duration || 7;
+    if (!duration || duration <= 0) return [];
+    const numDays = duration;
     const baseDate = startDate ? parseLocalDate(startDate) : new Date();
 
     return Array.from({ length: numDays }, (_, i) => {
@@ -222,13 +238,26 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   // Active Challenge Conflict Modal state (enforcing 1 active personal challenge)
   const [activeChallengeConflict, setActiveChallengeConflict] = useState<FirestoreChallenge | null>(null);
 
-  const isBoardLocked = !isChallengeSaved;
-
   // Dynamic Current Day derivation based on local midnight boundaries
   const currentDay = useMemo(() => {
-    if (!isChallengeSaved || !startDate) return 1;
-    return computeCurrentSprintDay(startDate, duration || 7, currentTime || Date.now());
-  }, [isChallengeSaved, startDate, currentTime, duration]);
+    if (!startDate || !duration) return 1;
+    return computeCurrentSprintDay(startDate, duration, currentTime || Date.now());
+  }, [startDate, currentTime, duration]);
+
+  // Step 1 & 2 validation states
+  const isDurationValid = typeof duration === 'number' && duration >= 5 && duration <= 60;
+  const isNameValid = challengeName.trim().length > 0;
+  const isStartDateValid = Boolean(startDate && startDate >= todayDateString);
+  const isStep1Valid = isDurationValid && isNameValid && isStartDateValid;
+  const isStep2Valid = syllabus.some((s) => s.checked);
+
+  const step1MissingReasons = useMemo(() => {
+    const reasons: string[] = [];
+    if (!isDurationValid) reasons.push('duration (5–60 days)');
+    if (!isNameValid) reasons.push('challenge name');
+    if (!isStartDateValid) reasons.push('valid start date');
+    return reasons;
+  }, [isDurationValid, isNameValid, isStartDateValid]);
 
   // Toast alert
   const [toastMessage, setToastMessage] = useState<{
@@ -307,29 +336,27 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           };
         }) as SyllabusItem[];
 
-        const challengeToUse = loadedChallenge || activeChallenge;
+        const challengeToUse =
+          loadedChallenge && loadedChallenge.status !== 'archived'
+            ? loadedChallenge
+            : activeChallenge && activeChallenge.status !== 'archived'
+            ? activeChallenge
+            : null;
         const activeIds = new Set(
           (challengeToUse?.selected_syllabus || []).map((s: { id: string }) => s.id)
         );
 
-        setSyllabus((prev) => {
+        setSyllabus((_prev) => {
           if (activeIds.size > 0) {
             return dedupedItems.map((item) => ({
               ...item,
               checked: activeIds.has(item.id),
             }));
           }
-          if (prev.length === 0) {
-            return dedupedItems.map((item) => ({
-              ...item,
-              checked: false,
-            }));
-          }
-          // Preserve checked state if syllabus was already loaded
-          const checkedMap = new Map(prev.map((p) => [p.id, p.checked]));
+          // When activeIds is empty (fresh sprint), set every item unchecked regardless of previous state
           return dedupedItems.map((item) => ({
             ...item,
-            checked: checkedMap.has(item.id) ? Boolean(checkedMap.get(item.id)) : false,
+            checked: false,
           }));
         });
       },
@@ -398,7 +425,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   const loadChallengeIntoWizard = (challengeDoc: FirestoreChallenge) => {
     setChallengeName(challengeDoc.challenge_name || '');
     if (challengeDoc.duration) {
-      setDuration(challengeDoc.duration as SprintDuration);
+      const dur = challengeDoc.duration as SprintDuration;
+      setDuration(dur);
+      if (![7, 14, 21, 30].includes(Number(dur))) {
+        setIsCustomDuration(true);
+        setCustomDurationInput(String(dur));
+      } else {
+        setIsCustomDuration(false);
+      }
     }
     if (challengeDoc.start_date) {
       setStartDate(getLocalDateString(parseLocalDate(challengeDoc.start_date)));
@@ -420,15 +454,15 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       }
     }
 
-    if (challengeDoc.selected_syllabus && challengeDoc.selected_syllabus.length > 0) {
-      const selectedIds = new Set(challengeDoc.selected_syllabus.map((s) => s.id));
-      setSyllabus((prev) =>
-        prev.map((item) => ({
-          ...item,
-          checked: selectedIds.has(item.id),
-        }))
-      );
-    }
+    const selectedIds = new Set(
+      (challengeDoc.selected_syllabus || []).map((s) => s.id)
+    );
+    setSyllabus((prev) =>
+      prev.map((item) => ({
+        ...item,
+        checked: selectedIds.has(item.id),
+      }))
+    );
   };
 
   // Gated Hydration: Run ONCE when BOTH syllabus and challenge data are ready
@@ -447,7 +481,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     }
   }, [user, loadingSyllabus, loadingChallenge, loadedChallenge, activeChallenge]);
 
-  // Update DnD board cards whenever selected syllabus changes: chapter-level grouping
+  // Update DnD board cards whenever selected syllabus changes: chapter-level grouping with capacity-aware allocation
   useEffect(() => {
     const selected = syllabus.filter((s) => s.checked);
     if (selected.length === 0) {
@@ -482,8 +516,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       groupsMap.get(chId)!.topics.push(item);
     });
 
-    const numCols = columns.length || 7;
-    const firstNonPastDay = Math.min(numCols, Math.max(1, currentDay));
+    const numCols = columns.length || (typeof duration === 'number' && duration > 0 ? duration : 7);
+    const firstNonPastDay = isChallengeSaved ? Math.min(numCols, Math.max(1, currentDay)) : 1;
 
     // DIRECTIVE: Once isChallengeSaved is true, stop rebuilding boardCards from the syllabus selection;
     // only apply selection changes to cards that are not yet on the board, and preserve each card's existing dayNumber.
@@ -516,8 +550,6 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     });
     chapterOrderRef.current = updatedOrder;
 
-    const availableDaysCount = Math.max(1, numCols - firstNonPastDay + 1);
-
     // Existing cards map by chapterId or id to preserve day assignments
     const existingCardsMap = new Map<string, BoardCard>();
     boardCards.forEach((c) => {
@@ -533,150 +565,26 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       if (c.title) existingCardsMap.set(c.title, c);
     });
 
-    // Build lookup map from saved allocation (the durable single source of truth)
-    const savedDayMap = new Map<string, number>();
-    const savedCardDataMap = new Map<string, any>();
-    if (savedAllocationRef.current) {
-      Object.entries(savedAllocationRef.current).forEach(([dayKey, dayCards]) => {
-        const match = dayKey.match(/Day\s+(\d+)/i);
-        const dayNum = match ? parseInt(match[1], 10) : 1;
-        if (Array.isArray(dayCards)) {
-          dayCards.forEach((c: any) => {
-            const keys = [
-              c.chapterId,
-              c.chapterId ? `chapter-${c.chapterId}` : undefined,
-              c.id,
-              c.id ? c.id.replace(/^chapter-/, '') : undefined,
-              c.chapterName,
-              c.title,
-            ].filter(Boolean) as string[];
-
-            keys.forEach((k) => {
-              savedDayMap.set(k, dayNum);
-              savedCardDataMap.set(k, c);
-            });
-
-            if (Array.isArray(c.topics)) {
-              c.topics.forEach((t: any) => {
-                if (t.id) {
-                  savedDayMap.set(t.id, dayNum);
-                  savedCardDataMap.set(t.id, c);
-                }
-              });
-            }
-          });
-        }
-      });
-    }
-
-    const hasSavedAllocation =
-      isChallengeSaved ||
-      (savedAllocationRef.current && Object.keys(savedAllocationRef.current).length > 0);
-
-    // Track total assigned minutes per day for allocating newly added chapters
-    const dayAllocatedMinutes: Record<number, number> = {};
-    for (let d = 1; d <= numCols; d++) {
-      dayAllocatedMinutes[d] = 0;
-    }
-
-    // Pre-calculate allocated minutes for chapters that already have a fixed day
-    updatedOrder.forEach((chId) => {
-      const group = groupsMap.get(chId)!;
-      const existing =
-        existingCardsMap.get(chId) ||
-        existingCardsMap.get(`chapter-${chId}`) ||
-        existingCardsMap.get(group.chapterName) ||
-        (group.chapterId ? existingCardsMap.get(group.chapterId) : undefined);
-
-      const savedDay =
-        savedDayMap.get(chId) ??
-        savedDayMap.get(`chapter-${chId}`) ??
-        savedDayMap.get(group.chapterName) ??
-        (group.chapterId ? savedDayMap.get(group.chapterId) : undefined) ??
-        group.topics.map((t) => savedDayMap.get(t.id)).find((d) => d !== undefined);
-
-      const fixedDay =
-        existing && existing.dayNumber >= 1
-          ? existing.dayNumber
-          : savedDay !== undefined && savedDay >= 1
-          ? savedDay
-          : null;
-
-      if (fixedDay !== null) {
-        const groupDuration = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
-        dayAllocatedMinutes[fixedDay] = (dayAllocatedMinutes[fixedDay] || 0) + groupDuration;
-      }
+    const dayCapacities: Record<number, number> = {};
+    columns.forEach((c) => {
+      dayCapacities[c.dayNumber] = c.capacityMinutes || 150;
     });
 
-    // Helper to find the first day that has capacity for a newly checked chapter
-    const findFirstDayWithCapacity = (neededMinutes: number): number => {
-      for (let d = firstNonPastDay; d <= numCols; d++) {
-        const col = columns.find((c) => c.dayNumber === d);
-        const cap = col?.capacityMinutes || 150;
-        const currentLoad = dayAllocatedMinutes[d] || 0;
-        if (currentLoad + neededMinutes <= cap) {
-          dayAllocatedMinutes[d] = currentLoad + neededMinutes;
-          return d;
-        }
-      }
-      let minDay = firstNonPastDay;
-      let minLoad = dayAllocatedMinutes[firstNonPastDay] || 0;
-      for (let d = firstNonPastDay + 1; d <= numCols; d++) {
-        const currentLoad = dayAllocatedMinutes[d] || 0;
-        if (currentLoad < minLoad) {
-          minLoad = currentLoad;
-          minDay = d;
-        }
-      }
-      dayAllocatedMinutes[minDay] = (dayAllocatedMinutes[minDay] || 0) + neededMinutes;
-      return minDay;
-    };
-
+    const fixedCardIds = new Set<string>();
     const seenNewCardIds = new Set<string>();
-    const newBoardCards: BoardCard[] = updatedOrder.map((chId, orderIdx) => {
+
+    const rawPreparedCards: BoardCard[] = updatedOrder.map((chId, orderIdx) => {
       const group = groupsMap.get(chId)!;
       const existing =
         existingCardsMap.get(chId) ||
         existingCardsMap.get(`chapter-${chId}`) ||
         existingCardsMap.get(group.chapterName) ||
         (group.chapterId ? existingCardsMap.get(group.chapterId) : undefined);
-
-      const savedDay =
-        savedDayMap.get(chId) ??
-        savedDayMap.get(`chapter-${chId}`) ??
-        savedDayMap.get(group.chapterName) ??
-        (group.chapterId ? savedDayMap.get(group.chapterId) : undefined) ??
-        group.topics.map((t) => savedDayMap.get(t.id)).find((d) => d !== undefined);
-
-      const savedCard =
-        savedCardDataMap.get(chId) ||
-        savedCardDataMap.get(`chapter-${chId}`) ||
-        savedCardDataMap.get(group.chapterName) ||
-        (group.chapterId ? savedCardDataMap.get(group.chapterId) : undefined) ||
-        group.topics.map((t) => savedCardDataMap.get(t.id)).find(Boolean);
 
       const totalDuration = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
 
-      // Determine day assignment:
-      // Priority 1: In-memory board card (e.g. user dragged it or just restored it)
-      // Priority 2: Saved allocation in challenge doc (NEVER re-derived for saved chapters!)
-      // Priority 3: If challenge is saved, assign new chapter to first day with capacity
-      // Priority 4: If unsaved, initial spread across available days
-      let assignedDay: number;
-      if (existing && existing.dayNumber >= 1) {
-        assignedDay = existing.dayNumber;
-      } else if (savedDay !== undefined && savedDay >= 1) {
-        assignedDay = savedDay;
-      } else if (hasSavedAllocation) {
-        assignedDay = findFirstDayWithCapacity(totalDuration);
-      } else {
-        assignedDay = firstNonPastDay + (orderIdx % availableDaysCount);
-      }
-
       const boardTopics: BoardTopic[] = group.topics.map((t) => {
-        const existingTopic =
-          existing?.topics?.find((top) => top.id === t.id) ||
-          savedCard?.topics?.find((top: any) => top.id === t.id);
+        const existingTopic = existing?.topics?.find((top) => top.id === t.id);
         return {
           id: t.id,
           title: t.title,
@@ -693,9 +601,15 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
       let cardId = `chapter-${group.chapterId}`;
       if (seenNewCardIds.has(cardId)) {
-        cardId = `chapter-${group.chapterId}-d${assignedDay}-${orderIdx + 1}`;
+        cardId = `chapter-${group.chapterId}-${orderIdx + 1}`;
       }
       seenNewCardIds.add(cardId);
+
+      const isPositionFixed = Boolean(existing && existing.dayNumber >= 1 && existing.dayNumber <= numCols);
+      const assignedDay = isPositionFixed ? existing!.dayNumber : 1;
+      if (isPositionFixed) {
+        fixedCardIds.add(cardId);
+      }
 
       return {
         id: cardId,
@@ -706,18 +620,22 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         durationMinutes: totalDuration,
         tag: `${group.topics.length} ${group.topics.length === 1 ? 'topic' : 'topics'}`,
         dayNumber: assignedDay,
-        isCarriedOver: Boolean(
-          existing?.isCarriedOver ||
-          savedCard?.isCarriedOver ||
-          boardTopics.some((t) => t.isCarriedOver)
-        ),
-        carriedOverFromDay: existing?.carriedOverFromDay || savedCard?.carriedOverFromDay,
+        isCarriedOver: Boolean(existing?.isCarriedOver || boardTopics.some((t) => t.isCarriedOver)),
+        carriedOverFromDay: existing?.carriedOverFromDay,
         topics: boardTopics,
       };
     });
 
-    setBoardCards(newBoardCards);
-  }, [syllabus, columns.length, currentDay, isChallengeSaved, loadingSyllabus]);
+    const balancedCards = balanceCardsAcrossDays({
+      cards: rawPreparedCards,
+      numDays: numCols,
+      firstNonPastDay,
+      dayCapacities,
+      fixedCardIds,
+    });
+
+    setBoardCards(balancedCards);
+  }, [syllabus, columns.length, currentDay, isChallengeSaved, loadingSyllabus, duration]);
 
   // Seed handler if admin notices empty syllabus
   const handleSeedSyllabus = async () => {
@@ -754,9 +672,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     }
   };
 
-  // DnD Handlers
+  // DnD Handlers - Unlocked pre-save
   const handleDragStart = (event: DragStartEvent) => {
-    if (isBoardLocked) return;
     const cardData = event.active.data.current?.card as BoardCard | undefined;
     if (cardData) {
       setActiveCard(cardData);
@@ -764,7 +681,6 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
-    if (isBoardLocked) return;
     const { active, over } = event;
     setActiveCard(null);
 
@@ -787,8 +703,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     if (originalDay === targetDay) return;
 
-    // VALIDATION 1: Prevent dropping ANY card into a past column
-    if (targetDay < currentDay) {
+    // VALIDATION 1: Prevent dropping ANY card into a past column for ongoing challenges
+    if (isChallengeSaved && targetDay < currentDay) {
       showToast(
         `Academic records for Day ${targetDay} are sealed. You can only schedule for Day ${currentDay} (Today) or upcoming days.`,
         'error'
@@ -805,7 +721,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     const executeDrop = () => {
       // VALIDATION 2: Allow dragging an unfinished card from past into future
-      if (originalDay < currentDay) {
+      if (isChallengeSaved && originalDay < currentDay) {
         showToast(
           `Moved "${draggedCard.chapterName || draggedCard.title}" from Day ${originalDay} to Day ${targetDay}.`,
           'success'
@@ -855,10 +771,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     executeDrop();
   };
 
-  // Topic Shift Modal Logic
+  // Topic Shift Modal Logic - Unlocked pre-save
   const handleCardClick = (card: BoardCard) => {
-    if (isBoardLocked) {
-      showToast('Please save the challenge first to unlock schedule changes.', 'info');
+    if (isChallengeSaved && card.dayNumber < currentDay) {
+      showToast(`Day ${card.dayNumber} is in the past and cannot be modified.`, 'info');
       return;
     }
     setShiftModalCard(card);
@@ -868,7 +784,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   const handleConfirmShift = (targetDay: number, overrideCapacity = false) => {
     if (!shiftModalCard) return;
 
-    if (targetDay < currentDay) {
+    if (isChallengeSaved && targetDay < currentDay) {
       showToast('Cannot move chapters to past days.', 'error');
       return;
     }
@@ -932,30 +848,21 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     executeShift();
   };
 
-  // Auto-balance workload helper: collects only future cards and round-robins across future columns
+  // Auto-balance workload helper: capacity-aware greedy balancing across available columns
   const handleAutoBalance = () => {
-    if (isBoardLocked) {
-      showToast('Please save the challenge first to unlock day balancing.', 'info');
-      return;
-    }
-    const futureCols = columns.filter((c) => c.dayNumber >= currentDay);
-    if (futureCols.length === 0) return;
+    if (!duration || duration <= 0) return;
+    const numCols = columns.length || duration;
+    const firstNonPast = isChallengeSaved ? Math.min(numCols, Math.max(1, currentDay)) : 1;
+    const dayCapacities: Record<number, number> = {};
+    columns.forEach((c) => {
+      dayCapacities[c.dayNumber] = c.capacityMinutes || 150;
+    });
 
-    const futureDayNumbers = futureCols.map((c) => c.dayNumber);
-    const futureCards = boardCards.filter((c) => c.dayNumber >= currentDay);
-
-    const nextCards = boardCards.map((card) => {
-      if (card.dayNumber < currentDay) return card;
-      const futureIndex = futureCards.findIndex((fc) => fc.id === card.id);
-      if (futureIndex === -1) return card;
-      const targetDay = futureDayNumbers[futureIndex % futureDayNumbers.length];
-      return {
-        ...card,
-        dayNumber: targetDay,
-        topics: card.topics
-          ? card.topics.map((t) => ({ ...t, dayNumber: targetDay }))
-          : card.topics,
-      };
+    const nextCards = balanceCardsAcrossDays({
+      cards: boardCards,
+      numDays: numCols,
+      firstNonPastDay: firstNonPast,
+      dayCapacities,
     });
 
     setBoardCards(nextCards);
@@ -964,13 +871,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       persistAllocation(nextCards);
     }
 
-    showToast('Workload distributed evenly across upcoming days.', 'success');
+    showToast('Workload balanced evenly across days.', 'success');
   };
 
   // Helper to execute challenge persistence once uniqueness check passes
   const executeCreateChallenge = async (selectedSyllabusItems: SyllabusItem[]) => {
     setIsCreatingChallenge(true);
     try {
+      const strictlyCheckedItems = selectedSyllabusItems.filter((item) => item.checked);
       const dayWiseAllocation: Record<string, BoardCard[]> = {};
       columns.forEach((col) => {
         dayWiseAllocation[`Day ${col.dayNumber}`] = boardCards.filter(
@@ -993,7 +901,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         start_date: getLocalMidnightIso(startDate!),
         end_date: computedEndDateIso || undefined,
         code: typeof challengePayload?.code === 'string' ? challengePayload.code : undefined,
-        selected_syllabus: selectedSyllabusItems.map((s) => ({
+        selected_syllabus: strictlyCheckedItems.map((s) => ({
           id: s.id,
           subject: s.subject,
           title: s.title,
@@ -1009,7 +917,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
             email: user!.email,
             photoURL: user!.photoURL,
             completed_topics: 0,
-            total_challenge_topics: selectedSyllabusItems.length,
+            total_challenge_topics: strictlyCheckedItems.length,
             last_completion_timestamp: Date.now(),
             joined_at: challengePayload?.participants?.[0]?.joined_at || new Date().toISOString(),
           },
@@ -1026,7 +934,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
       setChallengePayload({
         ...savedChallenge,
-        totalTopics: selectedSyllabusItems.length,
+        totalTopics: strictlyCheckedItems.length,
         totalEstimatedHours,
       });
       setIsStartModalOpen(true);
@@ -1518,8 +1426,22 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     );
   };
 
-  const handleSelectAllCore = () => {
-    setSyllabus((prev) => prev.map((s) => ({ ...s, checked: true })));
+  const handleToggleSubjectSyllabus = (topicIds: string[], targetChecked: boolean) => {
+    const idSet = new Set(topicIds);
+    setSyllabus((prev) =>
+      prev.map((s) => {
+        if (idSet.has(s.id)) {
+          return { ...s, checked: targetChecked };
+        }
+        return s;
+      })
+    );
+  };
+
+  const handleSelectAllFiltered = () => {
+    setSyllabus((prev) =>
+      prev.map((s) => (visibleTopicIds.has(s.id) ? { ...s, checked: true } : s))
+    );
   };
 
   const handleClearSelection = () => {
@@ -1561,6 +1483,18 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     });
   }, [masterSubjects, paperFilter]);
 
+  const visibleTopicIds = useMemo(() => {
+    const ids = new Set<string>();
+    filteredMasterSubjects.forEach((sub) => {
+      sub.chapters.forEach((ch) => {
+        ch.topics.forEach((t) => {
+          ids.add(t.id);
+        });
+      });
+    });
+    return ids;
+  }, [filteredMasterSubjects]);
+
   const toggleSubjectOpen = (subjectName: string) => {
     setOpenSubjectNames((prev) =>
       prev.includes(subjectName) ? prev.filter((s) => s !== subjectName) : [...prev, subjectName]
@@ -1597,7 +1531,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         </div>
       )}
 
-      {/* Top Banner / Navigation */}
+      {/* Top Banner / Navigation with Stepper */}
       <section className="w-full bg-white border-b border-[#c0c9c0]/30 shadow-xs">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-5 flex flex-col gap-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1610,156 +1544,353 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 <span className="font-semibold text-[#003820]">Sprint Setup</span>
                 <span>/</span>
                 <span className="px-2 py-0.5 rounded-full bg-[#eff4ff] text-[#003820] text-[10px] font-mono font-bold">
-                  HSC Syllabus
+                  Step {currentStep} of 3: {currentStep === 1 ? 'Sprint Config' : currentStep === 2 ? 'Choose Topics' : 'Plan Schedule'}
                 </span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-black text-[#003820] tracking-tight">
-                Create Study Sprint
+                {currentStep === 1
+                  ? 'Step 1: Sprint Configuration'
+                  : currentStep === 2
+                  ? 'Step 2: Choose Syllabus Topics'
+                  : 'Step 3: Plan Schedule (Drag & Drop)'}
               </h1>
             </div>
 
-            {/* Stepper Indicator (Task 3.2: duration ?? '-') */}
+            {/* Stepper Navigation Indicator */}
             <div className="flex items-center gap-2 bg-[#eff4ff] p-1.5 rounded-2xl shadow-xs border border-[#c0c9c0]/30 text-xs">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white text-[#0b1c30] shadow-xs">
-                <span className="w-5 h-5 rounded-full bg-[#003820] text-white text-[10px] flex items-center justify-center font-bold">
+              {/* Step 1 Chip */}
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                  currentStep === 1
+                    ? 'bg-[#003820] text-white shadow-xs'
+                    : isStep1Valid
+                    ? 'bg-white text-[#0b1c30] hover:bg-[#e5eeff]'
+                    : 'bg-white/60 text-[#707971]'
+                }`}
+              >
+                <span
+                  className={`w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-bold ${
+                    currentStep === 1 ? 'bg-white text-[#003820]' : 'bg-[#003820] text-white'
+                  }`}
+                >
                   1
                 </span>
                 <div className="flex flex-col text-left">
-                  <span className="font-semibold text-[11px]">Duration</span>
-                  <span className="text-[10px] text-[#707971] font-mono">{duration ?? '-'} Days</span>
+                  <span className="font-semibold text-[11px]">1. Config</span>
+                  <span
+                    className={`text-[10px] font-mono ${
+                      currentStep === 1 ? 'text-white/80' : 'text-[#707971]'
+                    }`}
+                  >
+                    {duration ? `${duration} Days` : 'Not set'}
+                  </span>
                 </div>
-                {duration !== null && (
-                  <span className="material-symbols-outlined text-[#003820] text-sm font-bold">check</span>
+                {isStep1Valid && currentStep !== 1 && (
+                  <span className="material-symbols-outlined text-[#006c49] text-sm font-bold">
+                    check
+                  </span>
                 )}
-              </div>
+              </button>
+
               <span className="text-[#c0c9c0]">›</span>
 
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white text-[#0b1c30] shadow-xs">
-                <span className="w-5 h-5 rounded-full bg-[#003820] text-white text-[10px] flex items-center justify-center font-bold">
+              {/* Step 2 Chip */}
+              <button
+                type="button"
+                disabled={!isStep1Valid}
+                onClick={() => isStep1Valid && setCurrentStep(2)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${
+                  !isStep1Valid
+                    ? 'opacity-50 cursor-not-allowed bg-white/40 text-[#707971]'
+                    : currentStep === 2
+                    ? 'bg-[#003820] text-white shadow-xs cursor-pointer'
+                    : isStep2Valid
+                    ? 'bg-white text-[#0b1c30] hover:bg-[#e5eeff] cursor-pointer'
+                    : 'bg-white/60 text-[#707971] cursor-pointer'
+                }`}
+              >
+                <span
+                  className={`w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-bold ${
+                    currentStep === 2 ? 'bg-white text-[#003820]' : 'bg-[#003820] text-white'
+                  }`}
+                >
                   2
                 </span>
                 <div className="flex flex-col text-left">
-                  <span className="font-semibold text-[11px]">Topics</span>
-                  <span className="text-[10px] text-[#707971] font-mono">
+                  <span className="font-semibold text-[11px]">2. Topics</span>
+                  <span
+                    className={`text-[10px] font-mono ${
+                      currentStep === 2 ? 'text-white/80' : 'text-[#707971]'
+                    }`}
+                  >
                     {selectedSyllabusCount} Selected
                   </span>
                 </div>
-                {selectedSyllabusCount > 0 && (
-                  <span className="material-symbols-outlined text-[#003820] text-sm font-bold">check</span>
+                {isStep2Valid && currentStep !== 2 && (
+                  <span className="material-symbols-outlined text-[#006c49] text-sm font-bold">
+                    check
+                  </span>
                 )}
-              </div>
+              </button>
+
               <span className="text-[#c0c9c0]">›</span>
 
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#003820] text-white shadow-xs">
-                <span className="w-5 h-5 rounded-full bg-[#6ffbbe] text-[#002111] text-[10px] flex items-center justify-center font-bold">
+              {/* Step 3 Chip */}
+              <button
+                type="button"
+                disabled={!isStep1Valid || !isStep2Valid}
+                onClick={() => isStep1Valid && isStep2Valid && setCurrentStep(3)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all ${
+                  !isStep1Valid || !isStep2Valid
+                    ? 'opacity-50 cursor-not-allowed bg-white/40 text-[#707971]'
+                    : currentStep === 3
+                    ? 'bg-[#003820] text-white shadow-xs cursor-pointer'
+                    : 'bg-white text-[#0b1c30] hover:bg-[#e5eeff] cursor-pointer'
+                }`}
+              >
+                <span
+                  className={`w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-bold ${
+                    currentStep === 3 ? 'bg-white text-[#003820]' : 'bg-[#003820] text-white'
+                  }`}
+                >
                   3
                 </span>
                 <div className="flex flex-col text-left">
-                  <span className="font-semibold text-[11px]">Schedule</span>
-                  <span className="text-[10px] text-[#6ffbbe] font-mono">Daily Plan</span>
+                  <span className="font-semibold text-[11px]">3. Schedule</span>
+                  <span
+                    className={`text-[10px] font-mono ${
+                      currentStep === 3 ? 'text-white/80' : 'text-[#707971]'
+                    }`}
+                  >
+                    {columns.length > 0 ? `${columns.length} Days` : 'Plan'}
+                  </span>
                 </div>
-                <span className="material-symbols-outlined text-[#6ffbbe] text-sm">edit_calendar</span>
-              </div>
+              </button>
             </div>
           </div>
         </div>
       </section>
 
       {/* Main Wizard Workspace */}
-      <div className="max-w-[1440px] mx-auto w-full px-4 sm:px-8 py-8 flex flex-col gap-10">
-        {/* STEP 1: DURATION SELECTION & SPRINT DETAILS (Task 3.2) */}
-        <section className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-full bg-[#e5eeff] text-[#003820] text-xs font-bold flex items-center justify-center">
-                01
+      <div className="max-w-[1440px] mx-auto w-full px-4 sm:px-8 py-8 flex flex-col gap-8 flex-1">
+        {/* STEP 1: DURATION SELECTION & SPRINT DETAILS */}
+        {currentStep === 1 && (
+          <section className="flex flex-col gap-6 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="w-8 h-8 rounded-full bg-[#e5eeff] text-[#003820] text-xs font-bold flex items-center justify-center">
+                  01
+                </span>
+                <div>
+                  <h2 className="text-lg font-bold text-[#0b1c30]">Select Sprint Duration</h2>
+                  <p className="text-xs text-[#404942]">
+                    Choose how long you want this sprint to run (5 to 60 days).
+                  </p>
+                </div>
+              </div>
+              <span className="px-3 py-1 rounded-full bg-[#6ffbbe]/30 text-[#003820] text-xs font-semibold">
+                Preset or Custom
               </span>
-              <div>
-                <h2 className="text-lg font-bold text-[#0b1c30]">Select Sprint Duration</h2>
-                <p className="text-xs text-[#404942]">Choose how long you want this sprint to run.</p>
+            </div>
+
+            {/* Duration Preset Cards (7, 14, 21, 30 Days + Custom) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* 7 Days */}
+              <div
+                onClick={() => {
+                  if (isChallengeSaved) {
+                    showToast('Sprint duration cannot be changed after saving.', 'info');
+                    return;
+                  }
+                  setIsCustomDuration(false);
+                  setCustomDurationInput('');
+                  setDuration(7);
+                }}
+                title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
+                className={`relative bg-white rounded-2xl p-5 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+                  isChallengeSaved ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:shadow-md'
+                } ${
+                  duration === 7 && !isCustomDuration
+                    ? 'ring-2 ring-[#003820] bg-gradient-to-br from-[#eff4ff]/60 via-white to-white shadow-md'
+                    : 'border border-[#c0c9c0]/30 opacity-85'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                    <span className="material-symbols-outlined text-xl">bolt</span>
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-[#0b1c30] font-bold">Weekly Sprint</h3>
+                    <span className="text-xs text-blue-700 font-semibold uppercase font-mono">
+                      7 Days
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#404942]">
+                  Focused chapter revision and exam prep over 1 week.
+                </p>
+              </div>
+
+              {/* 14 Days */}
+              <div
+                onClick={() => {
+                  if (isChallengeSaved) {
+                    showToast('Sprint duration cannot be changed after saving.', 'info');
+                    return;
+                  }
+                  setIsCustomDuration(false);
+                  setCustomDurationInput('');
+                  setDuration(14);
+                }}
+                title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
+                className={`relative bg-white rounded-2xl p-5 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+                  isChallengeSaved ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:shadow-md'
+                } ${
+                  duration === 14 && !isCustomDuration
+                    ? 'ring-2 ring-[#003820] bg-gradient-to-br from-[#eff4ff]/60 via-white to-white shadow-md'
+                    : 'border border-[#c0c9c0]/30 opacity-85'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <span className="material-symbols-outlined text-xl">date_range</span>
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-[#0b1c30] font-bold">2-Week Sprint</h3>
+                    <span className="text-xs text-emerald-700 font-semibold uppercase font-mono">
+                      14 Days
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#404942]">
+                  Balanced 2-week mastery cycle across core subjects.
+                </p>
+              </div>
+
+              {/* 21 Days */}
+              <div
+                onClick={() => {
+                  if (isChallengeSaved) {
+                    showToast('Sprint duration cannot be changed after saving.', 'info');
+                    return;
+                  }
+                  setIsCustomDuration(false);
+                  setCustomDurationInput('');
+                  setDuration(21);
+                }}
+                title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
+                className={`relative bg-white rounded-2xl p-5 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+                  isChallengeSaved ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:shadow-md'
+                } ${
+                  duration === 21 && !isCustomDuration
+                    ? 'ring-2 ring-[#003820] bg-gradient-to-br from-[#eff4ff]/60 via-white to-white shadow-md'
+                    : 'border border-[#c0c9c0]/30 opacity-85'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                    <span className="material-symbols-outlined text-xl">view_timeline</span>
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-[#0b1c30] font-bold">3-Week Sprint</h3>
+                    <span className="text-xs text-purple-700 font-semibold uppercase font-mono">
+                      21 Days
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#404942]">
+                  Comprehensive chapter breakdown and problem solving sets.
+                </p>
+              </div>
+
+              {/* 30 Days */}
+              <div
+                onClick={() => {
+                  if (isChallengeSaved) {
+                    showToast('Sprint duration cannot be changed after saving.', 'info');
+                    return;
+                  }
+                  setIsCustomDuration(false);
+                  setCustomDurationInput('');
+                  setDuration(30);
+                }}
+                title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
+                className={`relative bg-white rounded-2xl p-5 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+                  isChallengeSaved ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:shadow-md'
+                } ${
+                  duration === 30 && !isCustomDuration
+                    ? 'ring-2 ring-[#003820] bg-gradient-to-br from-[#eff4ff]/60 via-white to-white shadow-md'
+                    : 'border border-[#c0c9c0]/30 opacity-85'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                    <span className="material-symbols-outlined text-xl">event_repeat</span>
+                  </div>
+                  <div>
+                    <h3 className="text-sm text-[#0b1c30] font-bold">Monthly Sprint</h3>
+                    <span className="text-xs text-amber-700 font-semibold uppercase font-mono">
+                      30 Days
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#404942]">
+                  Full chapter coverage with steady daily pacing.
+                </p>
               </div>
             </div>
-            <span className="px-3 py-1 rounded-full bg-[#6ffbbe]/30 text-[#003820] text-xs font-semibold">
-              Recommended: 7 Days
-            </span>
-          </div>
 
-          {/* Duration Cards: unselected by default */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div
-              onClick={() => {
-                if (isChallengeSaved) {
-                  showToast('Sprint duration cannot be changed after saving.', 'info');
-                  return;
-                }
-                setDuration(7);
-              }}
-              title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
-              className={`relative bg-white rounded-2xl p-6 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
-                isChallengeSaved
-                  ? 'cursor-not-allowed opacity-60'
-                  : 'cursor-pointer hover:shadow-md'
-              } ${
-                duration === 7
-                  ? 'ring-2 ring-blue-600 bg-gradient-to-br from-blue-50/40 via-white to-white shadow-md'
-                  : 'border border-[#c0c9c0]/30 opacity-80'
-              }`}
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-2xl">bolt</span>
+            {/* Custom Duration Input Card */}
+            <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#c0c9c0]/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#eff4ff] text-[#003820] flex items-center justify-center">
+                  <span className="material-symbols-outlined text-xl">tune</span>
                 </div>
                 <div>
-                  <h3 className="text-base text-[#0b1c30] font-bold">Weekly Sprint</h3>
-                  <span className="text-xs text-blue-700 font-semibold uppercase">
-                    7 Days
-                  </span>
+                  <h3 className="text-xs font-bold text-[#0b1c30]">Custom Sprint Duration</h3>
+                  <p className="text-[11px] text-[#404942]">
+                    Specify any duration between 5 and 60 days for your custom study plan.
+                  </p>
                 </div>
               </div>
-              <p className="text-xs text-[#404942]">
-                Best for focused chapter revision and exam prep over 1 week.
-              </p>
-            </div>
 
-            <div
-              onClick={() => {
-                if (isChallengeSaved) {
-                  showToast('Sprint duration cannot be changed after saving.', 'info');
-                  return;
-                }
-                setDuration(30);
-              }}
-              title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
-              className={`relative bg-white rounded-2xl p-6 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
-                isChallengeSaved
-                  ? 'cursor-not-allowed opacity-60'
-                  : 'cursor-pointer hover:shadow-md'
-              } ${
-                duration === 30
-                  ? 'ring-2 ring-blue-600 bg-gradient-to-br from-blue-50/40 via-white to-white shadow-md'
-                  : 'border border-[#c0c9c0]/30 opacity-80'
-              }`}
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-12 h-12 rounded-xl bg-[#eff4ff] text-[#404942] flex items-center justify-center">
-                  <span className="material-symbols-outlined text-2xl">event_repeat</span>
+              <div className="flex items-center gap-3">
+                <div className="relative flex items-center">
+                  <input
+                    type="number"
+                    min={5}
+                    max={60}
+                    disabled={isChallengeSaved}
+                    value={customDurationInput}
+                    onChange={(e) => {
+                      if (isChallengeSaved) return;
+                      const raw = e.target.value;
+                      setCustomDurationInput(raw);
+                      setIsCustomDuration(true);
+                      const parsed = parseInt(raw, 10);
+                      if (!isNaN(parsed) && parsed >= 5 && parsed <= 60) {
+                        setDuration(parsed);
+                      } else {
+                        setDuration(null);
+                      }
+                    }}
+                    placeholder="5 – 60"
+                    className="w-28 bg-[#eff4ff]/60 border border-[#c0c9c0]/60 rounded-xl px-3 py-2 text-xs font-mono font-bold text-[#0b1c30] placeholder-[#707971] focus:bg-white focus:border-[#003820] focus:outline-none focus:ring-2 focus:ring-[#003820]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <span className="text-xs font-semibold text-[#707971] ml-2">Days</span>
                 </div>
-                <div>
-                  <h3 className="text-base text-[#0b1c30] font-bold">Monthly Sprint</h3>
-                  <span className="text-xs text-[#404942] font-semibold uppercase">
-                    30 Days
+                {isCustomDuration && duration && (
+                  <span className="px-2 py-0.5 rounded-md bg-[#6ffbbe]/30 text-[#002111] text-[11px] font-bold font-mono">
+                    {duration}d Active
                   </span>
-                </div>
+                )}
               </div>
-              <p className="text-xs text-[#404942]">
-                Covers full chapters and problem sets with steady daily pacing.
-              </p>
             </div>
-          </div>
 
-          {/* Prompts rendered once duration is picked (Task 3.2) */}
-          {duration !== null && (
-            <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#c0c9c0]/30 flex flex-col md:flex-row gap-6 items-stretch animate-in fade-in duration-200">
+            {/* Challenge Name & Starting Date Inputs */}
+            <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#c0c9c0]/30 flex flex-col md:flex-row gap-6 items-stretch">
               <div className="flex-1 flex flex-col gap-2">
                 <label className="text-xs font-bold text-[#0b1c30]">
                   Name your challenge <span className="text-red-500">*</span>
@@ -1768,9 +1899,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                   type="text"
                   value={challengeName}
                   onChange={(e) => setChallengeName(e.target.value)}
-                  placeholder="e.g. Physics Chapter 3 Revision"
+                  placeholder="e.g. Physics & Math 2-Week Sprint"
                   className="w-full bg-[#eff4ff]/60 hover:bg-[#eff4ff] focus:bg-white border border-[#c0c9c0]/60 focus:border-[#003820] rounded-xl px-4 py-2.5 text-xs text-[#0b1c30] placeholder-[#707971] focus:outline-none focus:ring-2 focus:ring-[#003820]/20 transition-all font-medium"
                 />
+                {!isNameValid && (
+                  <span className="text-[11px] text-amber-700 font-medium">
+                    Please provide a descriptive name for your sprint.
+                  </span>
+                )}
               </div>
 
               <div className="flex-1 flex flex-col gap-2">
@@ -1809,416 +1945,527 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                   />
                   {formattedEndDate && (
                     <div className="px-3.5 py-2 rounded-xl bg-[#eff4ff] text-[#003820] text-xs font-semibold border border-[#c0c9c0]/40 flex items-center gap-1.5 shrink-0">
-                      <span className="material-symbols-outlined text-sm text-[#006c49]">event_available</span>
-                      <span>Ends: <strong className="font-mono">{formattedEndDate}</strong></span>
+                      <span className="material-symbols-outlined text-sm text-[#006c49]">
+                        event_available
+                      </span>
+                      <span>
+                        Ends: <strong className="font-mono">{formattedEndDate}</strong>
+                      </span>
                     </div>
                   )}
                 </div>
+                {!isStartDateValid && (
+                  <span className="text-[11px] text-amber-700 font-medium">
+                    Start date cannot be in the past.
+                  </span>
+                )}
               </div>
             </div>
-          )}
-        </section>
 
-        {/* STEP 2: SYLLABUS SELECTION (FETCHED DIRECTLY FROM FIRESTORE `master_syllabus`) */}
-        <section className="flex flex-col gap-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-full bg-[#e5eeff] text-[#003820] text-xs font-bold flex items-center justify-center">
-                02
-              </span>
+            {/* Step 1 Footer Navigation & Validation Reason */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-white border border-[#c0c9c0]/30 shadow-xs">
               <div>
-                <h2 className="text-lg font-bold text-[#0b1c30]">Choose Topics</h2>
-                <p className="text-xs text-[#404942]">
-                  Pick the HSC chapters and topics you want to include in this sprint.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Paper Filter Segment (Task 3.3) */}
-              <div className="bg-white p-1 rounded-xl flex items-center shadow-xs border border-[#c0c9c0]/30 gap-1 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setPaperFilter('all')}
-                  className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
-                    paperFilter === 'all'
-                      ? 'bg-[#003820] text-white shadow-xs'
-                      : 'text-[#404942] hover:text-[#0b1c30]'
-                  }`}
-                >
-                  All
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaperFilter('1st')}
-                  className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
-                    paperFilter === '1st'
-                      ? 'bg-[#003820] text-white shadow-xs'
-                      : 'text-[#404942] hover:text-[#0b1c30]'
-                  }`}
-                >
-                  1st Paper
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaperFilter('2nd')}
-                  className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
-                    paperFilter === '2nd'
-                      ? 'bg-[#003820] text-white shadow-xs'
-                      : 'text-[#404942] hover:text-[#0b1c30]'
-                  }`}
-                >
-                  2nd Paper
-                </button>
-              </div>
-
-              <span className="text-xs text-[#404942] font-semibold pr-2">
-                {selectedSyllabusCount} topics selected •{' '}
-                <strong className="text-[#003820]">~{selectedSyllabusHours} hours total</strong>
-              </span>
-              <button
-                onClick={handleSelectAllCore}
-                className="px-3 py-1.5 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] text-[#0b1c30] text-xs font-semibold transition-colors cursor-pointer"
-              >
-                Select All
-              </button>
-              <button
-                onClick={handleClearSelection}
-                className="px-3 py-1.5 rounded-lg text-[#404942] hover:text-[#0b1c30] hover:bg-[#eff4ff] text-xs font-semibold transition-colors cursor-pointer"
-              >
-                Clear All
-              </button>
-            </div>
-          </div>
-
-          {/* Master Syllabus Cards Container */}
-          {loadingSyllabus ? (
-            <div className="p-12 text-center text-xs text-[#707971] bg-white rounded-2xl border border-[#c0c9c0]/30">
-              <div className="w-6 h-6 border-2 border-[#003820] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              Fetching official syllabus directly from Firestore /master_syllabus...
-            </div>
-          ) : filteredMasterSubjects.length === 0 ? (
-            <div className="p-8 bg-amber-50 rounded-2xl border border-amber-200 text-center space-y-3">
-              <span className="material-symbols-outlined text-3xl text-amber-700">warning</span>
-              <div>
-                <h4 className="font-bold text-sm text-amber-900">
-                  {masterSubjects.length === 0
-                    ? 'Master Syllabus is empty in Firestore'
-                    : 'No subjects match the selected paper filter'}
-                </h4>
-                <p className="text-xs text-amber-700 mt-0.5">
-                  {masterSubjects.length === 0
-                    ? 'The administrator needs to populate the official HSC Master Syllabus.'
-                    : 'Try selecting "All" to view all available syllabus subjects.'}
-                </p>
-              </div>
-              {masterSubjects.length === 0 && (
-                isAdmin ? (
-                  <button
-                    onClick={handleSeedSyllabus}
-                    disabled={seedingSyllabus}
-                    className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] cursor-pointer"
-                  >
-                    {seedingSyllabus ? 'Seeding...' : 'Seed Master Syllabus Now (Admin)'}
-                  </button>
+                {!isStep1Valid ? (
+                  <div className="flex items-center gap-2 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-xl">
+                    <span className="material-symbols-outlined text-sm text-amber-700">info</span>
+                    <span>
+                      Required to continue:{' '}
+                      <strong className="font-semibold">{step1MissingReasons.join(', ')}</strong>
+                    </span>
+                  </div>
                 ) : (
-                  <p className="text-[11px] text-[#707971]">
-                    Please contact the administrator ({user?.email}) to seed the syllabus.
-                  </p>
-                )
-              )}
+                  <div className="flex items-center gap-2 text-xs font-medium text-[#003820] bg-[#6ffbbe]/20 border border-[#006c49]/30 px-3 py-1.5 rounded-xl">
+                    <span className="material-symbols-outlined text-sm text-[#006c49]">check_circle</span>
+                    <span>Configuration valid. Ready to choose syllabus topics.</span>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                disabled={!isStep1Valid}
+                onClick={() => setCurrentStep(2)}
+                className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-[#003820] hover:bg-[#004e2d] text-white text-xs font-bold shadow-md shadow-[#003820]/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span>Next: Choose Topics</span>
+                <span className="material-symbols-outlined text-sm">arrow_forward</span>
+              </button>
             </div>
-          ) : (
-            /* Subject -> Chapter -> Topic Cascade (Task 3.3: closed by default) */
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {filteredMasterSubjects.map((sub, subIdx) => {
-                const isSubjectOpen = openSubjectNames.includes(sub.name);
-                const subTopics = sub.chapters.flatMap((c) => c.topics);
-                const subCheckedCount = subTopics.filter((t) => {
-                  const item = syllabusMap.get(t.id);
-                  return item?.checked;
-                }).length;
+          </section>
+        )}
 
-                return (
-                  <div
-                    key={`${sub.id || sub.name}-${subIdx}`}
-                    className="bg-white rounded-2xl p-5 shadow-xs border border-[#c0c9c0]/30 flex flex-col gap-3 transition-all"
+        {/* STEP 2: SYLLABUS SELECTION */}
+        {currentStep === 2 && (
+          <section className="flex flex-col gap-6 animate-in fade-in duration-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="w-8 h-8 rounded-full bg-[#e5eeff] text-[#003820] text-xs font-bold flex items-center justify-center">
+                  02
+                </span>
+                <div>
+                  <h2 className="text-lg font-bold text-[#0b1c30]">Choose Topics</h2>
+                  <p className="text-xs text-[#404942]">
+                    Pick the HSC chapters and topics you want to include in this sprint.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Paper Filter Segment */}
+                <div className="bg-white p-1 rounded-xl flex items-center shadow-xs border border-[#c0c9c0]/30 gap-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setPaperFilter('all')}
+                    className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
+                      paperFilter === 'all'
+                        ? 'bg-[#003820] text-white shadow-xs'
+                        : 'text-[#404942] hover:text-[#0b1c30]'
+                    }`}
                   >
-                    {/* Subject Header Accordion Toggle */}
-                    <div
-                      onClick={() => toggleSubjectOpen(sub.name)}
-                      className="flex items-center justify-between pb-3 border-b border-[#e5eeff] cursor-pointer hover:opacity-90 transition-opacity"
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaperFilter('1st')}
+                    className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
+                      paperFilter === '1st'
+                        ? 'bg-[#003820] text-white shadow-xs'
+                        : 'text-[#404942] hover:text-[#0b1c30]'
+                    }`}
+                  >
+                    1st Paper
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaperFilter('2nd')}
+                    className={`px-3 py-1 rounded-lg font-semibold transition-colors cursor-pointer ${
+                      paperFilter === '2nd'
+                        ? 'bg-[#003820] text-white shadow-xs'
+                        : 'text-[#404942] hover:text-[#0b1c30]'
+                    }`}
+                  >
+                    2nd Paper
+                  </button>
+                </div>
+
+                <span className="text-xs text-[#404942] font-semibold pr-2">
+                  {selectedSyllabusCount} topics selected •{' '}
+                  <strong className="text-[#003820]">~{selectedSyllabusHours} hours total</strong>
+                </span>
+                <button
+                  onClick={handleSelectAllFiltered}
+                  className="px-3 py-1.5 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] text-[#0b1c30] text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Select All (filtered)
+                </button>
+                <button
+                  onClick={handleClearSelection}
+                  className="px-3 py-1.5 rounded-lg text-[#404942] hover:text-[#0b1c30] hover:bg-[#eff4ff] text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+
+            {/* Master Syllabus Cards Container */}
+            {loadingSyllabus ? (
+              <div className="p-12 text-center text-xs text-[#707971] bg-white rounded-2xl border border-[#c0c9c0]/30">
+                <div className="w-6 h-6 border-2 border-[#003820] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                Fetching official syllabus directly from Firestore /master_syllabus...
+              </div>
+            ) : filteredMasterSubjects.length === 0 ? (
+              <div className="p-8 bg-amber-50 rounded-2xl border border-amber-200 text-center space-y-3">
+                <span className="material-symbols-outlined text-3xl text-amber-700">warning</span>
+                <div>
+                  <h4 className="font-bold text-sm text-amber-900">
+                    {masterSubjects.length === 0
+                      ? 'Master Syllabus is empty in Firestore'
+                      : 'No subjects match the selected paper filter'}
+                  </h4>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {masterSubjects.length === 0
+                      ? 'The administrator needs to populate the official HSC Master Syllabus.'
+                      : 'Try selecting "All" to view all available syllabus subjects.'}
+                  </p>
+                </div>
+                {masterSubjects.length === 0 && (
+                  isAdmin ? (
+                    <button
+                      onClick={handleSeedSyllabus}
+                      disabled={seedingSyllabus}
+                      className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] cursor-pointer"
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[#003820] text-xl">
-                          school
-                        </span>
-                        <span className="text-sm font-bold text-[#0b1c30]">{sub.name}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-full bg-[#6ffbbe]/30 text-[#003820] text-xs font-bold font-mono">
-                          {subCheckedCount} / {subTopics.length} selected
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={isSubjectOpen ? 'Collapse subject' : 'Expand subject'}
-                          className="w-7 h-7 rounded-lg bg-[#eff4ff] text-[#404942] flex items-center justify-center text-xs"
-                        >
-                          <span className="material-symbols-outlined text-sm">
-                            {isSubjectOpen ? 'expand_less' : 'expand_more'}
+                      {seedingSyllabus ? 'Seeding...' : 'Seed Master Syllabus Now (Admin)'}
+                    </button>
+                  ) : (
+                    <p className="text-[11px] text-[#707971]">
+                      Please contact the administrator ({user?.email}) to seed the syllabus.
+                    </p>
+                  )
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {filteredMasterSubjects.map((sub, subIdx) => {
+                  const isSubjectOpen = openSubjectNames.includes(sub.name);
+                  const subTopics = sub.chapters.flatMap((c) => c.topics);
+                  const subCheckedCount = subTopics.filter((t) => {
+                    const item = syllabusMap.get(t.id);
+                    return item?.checked;
+                  }).length;
+
+                  return (
+                    <div
+                      key={`${sub.id || sub.name}-${subIdx}`}
+                      className="bg-white rounded-2xl p-5 shadow-xs border border-[#c0c9c0]/30 flex flex-col gap-3 transition-all"
+                    >
+                      {/* Subject Header Accordion Toggle */}
+                      <div
+                        onClick={() => toggleSubjectOpen(sub.name)}
+                        className="flex items-center justify-between pb-3 border-b border-[#e5eeff] cursor-pointer hover:opacity-90 transition-opacity"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[#003820] text-xl">
+                            school
                           </span>
-                        </button>
+                          <span className="text-sm font-bold text-[#0b1c30]">{sub.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-0.5 rounded-full bg-[#6ffbbe]/30 text-[#003820] text-xs font-bold font-mono">
+                            {subCheckedCount} / {subTopics.length} selected
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleSubjectSyllabus(
+                                subTopics.map((t) => t.id),
+                                subCheckedCount < subTopics.length
+                              );
+                            }}
+                            className="px-2.5 py-0.5 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-[11px] font-semibold transition-colors cursor-pointer border border-[#c0c9c0]/30"
+                          >
+                            {subCheckedCount === subTopics.length ? 'Clear' : 'Select All'}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={isSubjectOpen ? 'Collapse subject' : 'Expand subject'}
+                            className="w-7 h-7 rounded-lg bg-[#eff4ff] text-[#404942] flex items-center justify-center text-xs"
+                          >
+                            <span className="material-symbols-outlined text-sm">
+                              {isSubjectOpen ? 'expand_less' : 'expand_more'}
+                            </span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Chapters list (when subject is open) */}
-                    {isSubjectOpen && (
-                      <div className="flex flex-col gap-3 pt-1 animate-in fade-in duration-150">
-                        {sub.chapters.map((ch, chIdx) => {
-                          const isChapterOpen = openChapterIds.includes(ch.id);
-                          const chCheckedCount = ch.topics.filter((t) => {
-                            const item = syllabusMap.get(t.id);
-                            return item?.checked;
-                          }).length;
+                      {/* Chapters list */}
+                      {isSubjectOpen && (
+                        <div className="flex flex-col gap-3 pt-1 animate-in fade-in duration-150">
+                          {sub.chapters.map((ch, chIdx) => {
+                            const isChapterOpen = openChapterIds.includes(ch.id);
+                            const chCheckedCount = ch.topics.filter((t) => {
+                              const item = syllabusMap.get(t.id);
+                              return item?.checked;
+                            }).length;
 
-                          const isChapterAllChecked = ch.topics.length > 0 && ch.topics.every((t) => {
-                            const item = syllabusMap.get(t.id);
-                            return item?.checked;
-                          });
+                            const isChapterAllChecked =
+                              ch.topics.length > 0 &&
+                              ch.topics.every((t) => {
+                                const item = syllabusMap.get(t.id);
+                                return item?.checked;
+                              });
 
-                          return (
-                            <div
-                              key={`${sub.id || sub.name}-${ch.id}-${chIdx}`}
-                              className="rounded-xl border border-[#c0c9c0]/30 overflow-hidden bg-[#eff4ff]/20"
-                            >
-                              {/* Chapter Header Toggle */}
+                            return (
                               <div
-                                onClick={() => toggleChapterOpen(ch.id)}
-                                className={`p-3 flex items-center justify-between cursor-pointer transition-colors ${
-                                  isChapterOpen ? 'bg-[#eff4ff]/80 border-b border-[#e5eeff]' : 'hover:bg-[#eff4ff]/40'
-                                }`}
+                                key={`${sub.id || sub.name}-${ch.id}-${chIdx}`}
+                                className="rounded-xl border border-[#c0c9c0]/30 overflow-hidden bg-[#eff4ff]/20"
                               >
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    aria-label={isChapterOpen ? 'Collapse chapter' : 'Expand chapter'}
-                                    className="w-6 h-6 rounded-md bg-[#eff4ff] text-[#003820] flex items-center justify-center text-xs"
-                                  >
-                                    <span className="material-symbols-outlined text-sm">
-                                      {isChapterOpen ? 'expand_less' : 'expand_more'}
-                                    </span>
-                                  </button>
-                                  <input
-                                    type="checkbox"
-                                    checked={isChapterAllChecked}
-                                    ref={(el) => {
-                                      if (el) {
-                                        const someChecked = ch.topics.some((t) => syllabusMap.get(t.id)?.checked);
-                                        el.indeterminate = someChecked && !isChapterAllChecked;
-                                      }
-                                    }}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      handleToggleChapterSyllabus(ch.id, ch.topics, isChapterAllChecked);
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="w-4 h-4 accent-[#003820] rounded cursor-pointer shrink-0"
-                                  />
-                                  <span className="text-xs font-bold text-[#0b1c30]">{ch.name}</span>
+                                {/* Chapter Header Toggle */}
+                                <div
+                                  onClick={() => toggleChapterOpen(ch.id)}
+                                  className={`p-3 flex items-center justify-between cursor-pointer transition-colors ${
+                                    isChapterOpen
+                                      ? 'bg-[#eff4ff]/80 border-b border-[#e5eeff]'
+                                      : 'hover:bg-[#eff4ff]/40'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      aria-label={isChapterOpen ? 'Collapse chapter' : 'Expand chapter'}
+                                      className="w-6 h-6 rounded-md bg-[#eff4ff] text-[#003820] flex items-center justify-center text-xs"
+                                    >
+                                      <span className="material-symbols-outlined text-sm">
+                                        {isChapterOpen ? 'expand_less' : 'expand_more'}
+                                      </span>
+                                    </button>
+                                    <input
+                                      type="checkbox"
+                                      checked={isChapterAllChecked}
+                                      ref={(el) => {
+                                        if (el) {
+                                          const someChecked = ch.topics.some(
+                                            (t) => syllabusMap.get(t.id)?.checked
+                                          );
+                                          el.indeterminate = someChecked && !isChapterAllChecked;
+                                        }
+                                      }}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        handleToggleChapterSyllabus(ch.id, ch.topics, isChapterAllChecked);
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="w-4 h-4 accent-[#003820] rounded cursor-pointer shrink-0"
+                                    />
+                                    <span className="text-xs font-bold text-[#0b1c30]">{ch.name}</span>
+                                  </div>
+                                  <span className="text-[11px] font-mono text-[#707971]">
+                                    {chCheckedCount} / {ch.topics.length} topics
+                                  </span>
                                 </div>
-                                <span className="text-[11px] font-mono text-[#707971]">
-                                  {chCheckedCount} / {ch.topics.length} topics
-                                </span>
-                              </div>
 
-                              {/* Topics List in Chapter */}
-                              {isChapterOpen && (
-                                <div className="p-3 flex flex-col gap-2 bg-white animate-in fade-in duration-150">
-                                  {ch.topics.map((top, topIdx) => {
-                                    const item = syllabusMap.get(top.id) || {
-                                      id: top.id,
-                                      subject: sub.name,
-                                      title: top.title,
-                                      subconcept: top.subconcept || `${ch.name} • Concept synthesis`,
-                                      durationMinutes: top.durationMinutes || 45,
-                                      tag: top.tag || 'Core Concept',
-                                      checked: false,
-                                    };
+                                {/* Topics List in Chapter */}
+                                {isChapterOpen && (
+                                  <div className="p-3 flex flex-col gap-2 bg-white animate-in fade-in duration-150">
+                                    {ch.topics.map((top, topIdx) => {
+                                      const item = syllabusMap.get(top.id) || {
+                                        id: top.id,
+                                        subject: sub.name,
+                                        title: top.title,
+                                        subconcept: top.subconcept || `${ch.name} • Concept synthesis`,
+                                        durationMinutes: top.durationMinutes || 45,
+                                        tag: top.tag || 'Core Concept',
+                                        checked: false,
+                                      };
 
-                                    return (
-                                      <label
-                                        key={`${ch.id}-${top.id}-${topIdx}`}
-                                        className={`flex items-center justify-between p-2.5 rounded-xl border transition-colors cursor-pointer group ${
-                                          item.checked
-                                            ? 'bg-[#eff4ff] border-[#c0c9c0]/40 hover:bg-[#e5eeff]'
-                                            : 'border-transparent hover:bg-[#eff4ff]/60 opacity-60'
-                                        }`}
-                                      >
-                                        <div className="flex items-center gap-3">
-                                          <input
-                                            type="checkbox"
-                                            checked={item.checked}
-                                            onChange={() => handleToggleSyllabus(item.id)}
-                                            className="w-4 h-4 accent-[#003820] rounded cursor-pointer"
-                                          />
-                                          <div className="flex flex-col">
-                                            <span className="text-xs font-semibold text-[#0b1c30] group-hover:text-[#003820]">
-                                              {item.title}
+                                      return (
+                                        <label
+                                          key={`${ch.id}-${top.id}-${topIdx}`}
+                                          className={`flex items-center justify-between p-2.5 rounded-xl border transition-colors cursor-pointer group ${
+                                            item.checked
+                                              ? 'bg-[#eff4ff] border-[#c0c9c0]/40 hover:bg-[#e5eeff]'
+                                              : 'border-transparent hover:bg-[#eff4ff]/60 opacity-60'
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-3">
+                                            <input
+                                              type="checkbox"
+                                              checked={item.checked}
+                                              onChange={() => handleToggleSyllabus(item.id)}
+                                              className="w-4 h-4 accent-[#003820] rounded cursor-pointer"
+                                            />
+                                            <div className="flex flex-col">
+                                              <span className="text-xs font-semibold text-[#0b1c30] group-hover:text-[#003820]">
+                                                {item.title}
+                                              </span>
+                                              <span className="text-[10px] text-[#404942]">
+                                                {item.subconcept}
+                                              </span>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex items-center gap-1.5 shrink-0">
+                                            <span className="px-2 py-0.5 rounded bg-white text-[#404942] text-[10px] font-mono border border-[#c0c9c0]/30">
+                                              {item.durationMinutes}m
                                             </span>
-                                            <span className="text-[10px] text-[#404942]">
-                                              {item.subconcept}
+                                            <span className="px-2 py-0.5 rounded bg-[#6ffbbe]/30 text-[#002111] text-[10px] font-semibold">
+                                              {item.tag}
                                             </span>
                                           </div>
-                                        </div>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
-                                        <div className="flex items-center gap-1.5 shrink-0">
-                                          <span className="px-2 py-0.5 rounded bg-white text-[#404942] text-[10px] font-mono border border-[#c0c9c0]/30">
-                                            {item.durationMinutes}m
-                                          </span>
-                                          <span className="px-2 py-0.5 rounded bg-[#6ffbbe]/30 text-[#002111] text-[10px] font-semibold">
-                                            {item.tag}
-                                          </span>
-                                        </div>
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+            {/* Step 2 Footer Navigation */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-white border border-[#c0c9c0]/30 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-[#c0c9c0] hover:bg-[#eff4ff] text-[#0b1c30] text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-sm">arrow_back</span>
+                <span>Back: Configuration</span>
+              </button>
+
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                {selectedSyllabusCount === 0 && (
+                  <span className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-xl">
+                    Select at least 1 topic to continue.
+                  </span>
+                )}
+                <button
+                  type="button"
+                  disabled={selectedSyllabusCount === 0}
+                  onClick={() => setCurrentStep(3)}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-[#003820] hover:bg-[#004e2d] text-white text-xs font-bold shadow-md shadow-[#003820]/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span>Next: Plan Schedule</span>
+                  <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                </button>
+              </div>
             </div>
-          )}
-        </section>
+          </section>
+        )}
 
         {/* STEP 3: WORKLOAD DISTRIBUTION & DnD KANBAN BOARD */}
-        <section className="flex flex-col gap-5 pt-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-full bg-[#003820] text-[#6ffbbe] text-xs font-bold flex items-center justify-center">
-                03
-              </span>
-              <div>
-                <h2 className="text-lg font-bold text-[#0b1c30]">
-                  Plan Your Schedule (Drag & Drop)
-                </h2>
-                <p className="text-xs text-[#404942]">
-                  Drag topics between days to organize your daily study routine.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleAutoBalance}
-                disabled={isBoardLocked}
-                className="px-3 py-1.5 rounded-xl bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-xs font-semibold border border-[#c0c9c0]/30 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                title={isBoardLocked ? 'Save challenge first to unlock auto-balancing' : undefined}
-              >
-                Balance Days
-              </button>
-
-              <button
-                onClick={handleStartChallenge}
-                disabled={
-                  isCreatingChallenge ||
-                  selectedSyllabusCount === 0 ||
-                  (isChallengeSaved && !hasNewUnsavedTopics)
-                }
-                className="px-5 py-2 rounded-xl bg-[#003820] hover:bg-[#004e2d] text-white text-xs font-bold shadow-md shadow-[#003820]/20 flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-              >
-                <span className="material-symbols-outlined text-sm text-[#6ffbbe]">
-                  {isChallengeSaved && !hasNewUnsavedTopics ? 'check_circle' : 'save'}
+        {currentStep === 3 && (
+          <section className="flex flex-col gap-6 animate-in fade-in duration-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="w-8 h-8 rounded-full bg-[#003820] text-[#6ffbbe] text-xs font-bold flex items-center justify-center">
+                  03
                 </span>
-                <span>
-                  {isCreatingChallenge
-                    ? 'Saving Challenge...'
-                    : isChallengeSaved
-                    ? hasNewUnsavedTopics
-                      ? 'Save Changes'
-                      : 'Challenge Saved'
-                    : 'Save Challenge'}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* Board Gating Status Banner */}
-          {!isChallengeSaved ? (
-            <div className="px-3.5 py-2 rounded-xl bg-[#eff4ff] border border-[#c0c9c0]/40 text-xs text-[#404942] flex items-center justify-between gap-2 shadow-2xs">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-base text-[#006c49]">lock</span>
-                <span>Planning board is locked. Click <strong>Save Challenge</strong> to save your sprint and unlock drag & drop planning.</span>
-              </div>
-              <span className="text-[10px] font-mono uppercase font-bold text-[#707971] bg-white px-2 py-0.5 rounded border border-[#c0c9c0]/30 shrink-0">
-                Locked
-              </span>
-            </div>
-          ) : (
-            <div className="px-3.5 py-2 rounded-xl bg-[#eff4ff] border border-[#006c49]/30 text-xs text-[#003820] flex items-center justify-between gap-2 shadow-2xs">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-base text-[#006c49]">lock_open</span>
-                <span>Challenge saved to Firestore. Planning board is unlocked for drag & drop customization. Changes auto-save instantly.</span>
-              </div>
-              <span className="text-[10px] font-mono uppercase font-bold text-[#006c49] bg-white px-2 py-0.5 rounded border border-[#006c49]/30 shrink-0">
-                Unlocked
-              </span>
-            </div>
-          )}
-
-          {/* DnD Context Board */}
-          <DndContext
-            sensors={sensors}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
-            <div
-              ref={scrollContainerRef}
-              className={`flex gap-4 overflow-x-auto pb-4 pt-1 snap-x scrollbar-thin scrollbar-thumb-[#c0c9c0] transition-opacity duration-200 ${
-                isBoardLocked ? 'opacity-75' : ''
-              }`}
-            >
-              {columns.map((column) => {
-                const columnCards = boardCards.filter((c) => c.dayNumber === column.dayNumber);
-
-                return (
-                  <DroppableDayColumn
-                    key={column.dayNumber}
-                    column={column}
-                    cards={columnCards}
-                    currentDay={currentDay}
-                    activeCard={activeCard}
-                    onCardClick={handleCardClick}
-                    isBoardLocked={isBoardLocked}
-                    onRemoveTopic={handleRemoveTopic}
-                    onRemoveCard={handleRemoveCard}
-                  />
-                );
-              })}
-            </div>
-
-            {/* Drag Overlay Ghost Card */}
-            <DragOverlay>
-              {activeCard && (
-                <div className="p-3.5 rounded-xl bg-white border-2 border-blue-500 shadow-2xl rotate-2 opacity-95 w-72">
-                  <div className="flex items-center justify-between text-[11px] mb-1">
-                    <span className="font-bold text-blue-700">{activeCard.subject}</span>
-                    <span className="text-[#707971] font-mono">{activeCard.durationMinutes}m</span>
-                  </div>
-                  <h4 className="text-xs font-bold text-[#0b1c30]">{activeCard.chapterName || activeCard.title}</h4>
-                  <div className="text-[10px] text-[#707971] mt-1 font-mono">
-                    {activeCard.topics?.length || 1} {(activeCard.topics?.length || 1) === 1 ? 'topic' : 'topics'}
-                  </div>
+                <div>
+                  <h2 className="text-lg font-bold text-[#0b1c30]">
+                    Plan Your Schedule (Drag & Drop)
+                  </h2>
+                  <p className="text-xs text-[#404942]">
+                    Drag topics between days to organize your daily study routine. Everything works before saving!
+                  </p>
                 </div>
-              )}
-            </DragOverlay>
-          </DndContext>
-        </section>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(2)}
+                  className="px-3 py-1.5 rounded-xl border border-[#c0c9c0] hover:bg-[#eff4ff] text-[#0b1c30] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">arrow_back</span>
+                  <span>Edit Topics</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleAutoBalance}
+                  className="px-3.5 py-1.5 rounded-xl bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-xs font-semibold border border-[#c0c9c0]/30 transition-colors cursor-pointer flex items-center gap-1.5"
+                  title="Evenly distribute workload across available days based on capacity"
+                >
+                  <span className="material-symbols-outlined text-sm">balance</span>
+                  <span>Balance Days</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {!isChallengeSaved && selectedSyllabusCount === 0 && (
+                    <span className="text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200/60 px-2.5 py-1 rounded-lg">
+                      Select at least 1 topic
+                    </span>
+                  )}
+                  <button
+                    onClick={handleStartChallenge}
+                    disabled={
+                      isCreatingChallenge ||
+                      selectedSyllabusCount === 0 ||
+                      (isChallengeSaved && !hasNewUnsavedTopics)
+                    }
+                    className="px-5 py-2 rounded-xl bg-[#003820] hover:bg-[#004e2d] text-white text-xs font-bold shadow-md shadow-[#003820]/20 flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span className="material-symbols-outlined text-sm text-[#6ffbbe]">
+                      {isChallengeSaved && !hasNewUnsavedTopics ? 'check_circle' : 'save'}
+                    </span>
+                    <span>
+                      {isCreatingChallenge
+                        ? 'Saving Challenge...'
+                        : isChallengeSaved
+                        ? hasNewUnsavedTopics
+                          ? 'Save Changes'
+                          : 'Challenge Saved'
+                        : 'Start Challenge'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Status Bar */}
+            <div className="px-4 py-2.5 rounded-xl bg-white border border-[#c0c9c0]/30 text-xs flex flex-wrap items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-4 text-[#404942]">
+                <span>
+                  Sprint:{' '}
+                  <strong className="text-[#0b1c30]">
+                    {challengeName || 'Custom Sprint'} ({duration} Days)
+                  </strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Topics: <strong className="text-[#003820]">{selectedSyllabusCount}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Total Load:{' '}
+                  <strong className="text-[#003820]">~{selectedSyllabusHours} hours</strong>
+                </span>
+              </div>
+              <div className="text-[11px] text-[#707971]">
+                {isChallengeSaved
+                  ? 'Active sprint saved in database. Changes auto-save on drag.'
+                  : 'Pre-save planning mode. Drag & balance freely before starting.'}
+              </div>
+            </div>
+
+            {/* DnD Context Board */}
+            <DndContext
+              sensors={sensors}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
+              <div
+                ref={scrollContainerRef}
+                className="flex gap-4 overflow-x-auto pb-4 pt-1 snap-x scrollbar-thin scrollbar-thumb-[#c0c9c0] transition-opacity duration-200"
+              >
+                {columns.map((column) => {
+                  const columnCards = boardCards.filter((c) => c.dayNumber === column.dayNumber);
+
+                  return (
+                    <DroppableDayColumn
+                      key={column.dayNumber}
+                      column={column}
+                      cards={columnCards}
+                      currentDay={currentDay}
+                      activeCard={activeCard}
+                      onCardClick={handleCardClick}
+                      isBoardLocked={false}
+                      onRemoveTopic={handleRemoveTopic}
+                      onRemoveCard={handleRemoveCard}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Drag Overlay Ghost Card */}
+              <DragOverlay>
+                {activeCard && (
+                  <div className="p-3.5 rounded-xl bg-white border-2 border-blue-500 shadow-2xl rotate-2 opacity-95 w-72">
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <span className="font-bold text-blue-700">{activeCard.subject}</span>
+                      <span className="text-[#707971] font-mono">{activeCard.durationMinutes}m</span>
+                    </div>
+                    <h4 className="text-xs font-bold text-[#0b1c30]">
+                      {activeCard.chapterName || activeCard.title}
+                    </h4>
+                    <div className="text-[10px] text-[#707971] mt-1 font-mono">
+                      {activeCard.topics?.length || 1}{' '}
+                      {(activeCard.topics?.length || 1) === 1 ? 'topic' : 'topics'}
+                    </div>
+                  </div>
+                )}
+              </DragOverlay>
+            </DndContext>
+          </section>
+        )}
       </div>
 
       {/* Modals */}

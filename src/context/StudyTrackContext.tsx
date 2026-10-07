@@ -13,7 +13,7 @@ import { HSCSubject, HSCProgressSummary } from '../types/hsc';
 import { PeerContender, ActiveSprintChallenge } from '../types/peerArena';
 import { FirestoreChallenge } from '../types/challenge';
 import { MasterSubject } from '../types/syllabus';
-import { INITIAL_HSC_MASTER_SYLLABUS, convertMasterToHSC } from '../data/hscMasterSyllabus';
+import { convertMasterToHSC } from '../data/hscMasterSyllabus';
 import { subscribeMasterSyllabus } from '../services/syllabusService';
 import {
   joinFirestoreChallenge,
@@ -37,6 +37,8 @@ import {
   toggleUserTopicProgress,
   setUserTopicProgressBatch,
   resetTopicsProgress,
+  toggleHideSubject as toggleHideSubjectService,
+  setHiddenSubjectIds as setHiddenSubjectIdsService,
   UserTopicProgress,
   UserProgressDoc,
   updateActiveChallengeId,
@@ -73,6 +75,9 @@ interface StudyTrackContextType {
   // HSC Grand Progress State
   hscMasterSyllabus: HSCSubject[];
   hscSummary: HSCProgressSummary;
+  hiddenSubjectIds: string[];
+  toggleHideSubject: (subjectId: string) => Promise<void>;
+  setHiddenSubjects: (subjectIds: string[]) => Promise<void>;
 
   // Real-time Firestore Challenge & Peer Arena State
   activeChallenge: FirestoreChallenge | null;
@@ -158,11 +163,11 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   }, [userProgressDoc]);
 
   const [globalMasterSyllabus, setGlobalMasterSyllabus] = useState<MasterSubject[]>([]);
+  const [hiddenSubjectIds, setHiddenSubjectIds] = useState<string[]>([]);
 
   // Real tasks from active challenge (empty by default if no active challenge)
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [hscMasterSyllabus, setHscMasterSyllabus] =
-    useState<HSCSubject[]>(INITIAL_HSC_MASTER_SYLLABUS);
+  const [hscMasterSyllabus, setHscMasterSyllabus] = useState<HSCSubject[]>([]);
 
   // Real-time clock for time-based locks (updates every 10s)
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -197,12 +202,13 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
 
   // Real-Time Firestore onSnapshot Listener for Master Syllabus
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setGlobalMasterSyllabus([]);
+      return;
+    }
 
     const unsubscribe = subscribeMasterSyllabus((masterSubs) => {
-      if (masterSubs && masterSubs.length > 0) {
-        setGlobalMasterSyllabus(masterSubs);
-      }
+      setGlobalMasterSyllabus(masterSubs || []);
     });
     return () => unsubscribe();
   }, [user]);
@@ -212,6 +218,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     if (!user) {
       setUserProgressDoc(null);
       setUserProgress({});
+      setHiddenSubjectIds([]);
       setActiveChallengeId(null);
       if (prevUserUidRef.current) {
         localStorage.removeItem(getActiveChallengeStorageKey(prevUserUidRef.current));
@@ -228,6 +235,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
         setUserProgressDoc(progressDoc);
         if (progressDoc) {
           setUserProgress(progressDoc.topicProgress || {});
+          setHiddenSubjectIds(progressDoc.hiddenSubjectIds || []);
           
           const fsId = progressDoc.activeChallengeId || null;
           // Single Source of Truth check using Ref to avoid stale closure
@@ -241,6 +249,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
           }
         } else {
           setUserProgress({});
+          setHiddenSubjectIds([]);
           setActiveChallengeId(null);
           localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
         }
@@ -274,12 +283,13 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     }
   }, [activeChallenge, user]);
 
-  // Sync hscMasterSyllabus whenever global syllabus or user progress changes
+  // Sync hscMasterSyllabus whenever global syllabus, hidden subjects, or user progress changes
   useEffect(() => {
-    if (globalMasterSyllabus.length > 0) {
-      setHscMasterSyllabus(convertMasterToHSC(globalMasterSyllabus, userProgress));
-    }
-  }, [globalMasterSyllabus, userProgress]);
+    const visibleSubjects = globalMasterSyllabus.filter(
+      (s) => !hiddenSubjectIds.includes(s.id)
+    );
+    setHscMasterSyllabus(convertMasterToHSC(visibleSubjects, userProgress));
+  }, [globalMasterSyllabus, userProgress, hiddenSubjectIds]);
 
 function getTopicAllocatedDayMap(
   challenge: FirestoreChallenge | null | undefined
@@ -1395,6 +1405,39 @@ function getTopicAllocatedDayMap(
     }
   };
 
+  const toggleHideSubject = async (subjectId: string) => {
+    if (!user) return;
+    const isCurrentlyHidden = hiddenSubjectIds.includes(subjectId);
+    const next = isCurrentlyHidden
+      ? hiddenSubjectIds.filter((id) => id !== subjectId)
+      : [...hiddenSubjectIds, subjectId];
+    setHiddenSubjectIds(next);
+
+    try {
+      await toggleHideSubjectService(user.uid, subjectId);
+      triggerToast(isCurrentlyHidden ? 'Subject unhidden.' : 'Subject hidden from your view.');
+    } catch (err) {
+      console.error('Failed to toggle hide subject:', err);
+      setHiddenSubjectIds(hiddenSubjectIds);
+      triggerToast('Failed to update hidden subject preference.');
+    }
+  };
+
+  const setHiddenSubjects = async (subjectIds: string[]) => {
+    if (!user) return;
+    const prev = [...hiddenSubjectIds];
+    setHiddenSubjectIds(subjectIds);
+
+    try {
+      await setHiddenSubjectIdsService(user.uid, subjectIds);
+      triggerToast('Subject visibility updated.');
+    } catch (err) {
+      console.error('Failed to set hidden subjects:', err);
+      setHiddenSubjectIds(prev);
+      triggerToast('Failed to update hidden subjects.');
+    }
+  };
+
   // Delete active personal challenge
   const deleteActiveChallenge = async () => {
     if (!user || !activeChallenge) return;
@@ -1432,6 +1475,9 @@ function getTopicAllocatedDayMap(
         completedTopicsCount,
         hscMasterSyllabus,
         hscSummary,
+        hiddenSubjectIds,
+        toggleHideSubject,
+        setHiddenSubjects,
         activeChallenge,
         activeChallengeId,
         challenge,

@@ -45,7 +45,7 @@ export function subscribeMasterSyllabus(
   onError?: (err: unknown) => void
 ) {
   if (!auth.currentUser) {
-    onData(DEFAULT_HSC_SYLLABUS);
+    onData([]);
     return () => {};
   }
 

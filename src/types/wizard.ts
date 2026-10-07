@@ -1,4 +1,4 @@
-export type SprintDuration = 7 | 30;
+export type SprintDuration = 7 | 14 | 21 | 30 | number;
 
 export interface SyllabusItem {
   id: string;

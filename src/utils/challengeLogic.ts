@@ -347,3 +347,104 @@ export function flattenAllocationToTopics(
 
   return result;
 }
+
+export interface BalanceCardsOptions {
+  cards: BoardCard[];
+  numDays: number;
+  firstNonPastDay?: number;
+  dayCapacities?: Record<number, number>;
+  fixedCardIds?: Set<string>;
+}
+
+/**
+ * Capacity-aware greedy allocator that balances chapters across days by durationMinutes.
+ * Respects column capacity (default 150m), keeps past-day and pinned cards fixed,
+ * and distributes movable cards to achieve even workload across available days.
+ */
+export function balanceCardsAcrossDays(options: BalanceCardsOptions): BoardCard[] {
+  const {
+    cards,
+    numDays,
+    firstNonPastDay = 1,
+    dayCapacities = {},
+    fixedCardIds = new Set<string>(),
+  } = options;
+
+  if (!cards || cards.length === 0 || !numDays || numDays <= 0) return cards || [];
+
+  const validFirstDay = Math.min(numDays, Math.max(1, firstNonPastDay));
+  const availableDays: number[] = [];
+  for (let d = validFirstDay; d <= numDays; d++) {
+    availableDays.push(d);
+  }
+  if (availableDays.length === 0) return cards;
+
+  // Track allocated minutes per day
+  const dayMinutes: Record<number, number> = {};
+  for (let d = 1; d <= numDays; d++) {
+    dayMinutes[d] = 0;
+  }
+
+  const fixedCards: BoardCard[] = [];
+  const movableCards: BoardCard[] = [];
+
+  cards.forEach((card) => {
+    // If card is in a past day (< validFirstDay) or explicitly fixed, preserve its day
+    if (card.dayNumber < validFirstDay || fixedCardIds.has(card.id)) {
+      const clampedDay = Math.min(numDays, Math.max(1, card.dayNumber));
+      dayMinutes[clampedDay] = (dayMinutes[clampedDay] || 0) + (card.durationMinutes || 0);
+      fixedCards.push({
+        ...card,
+        dayNumber: clampedDay,
+        topics: card.topics?.map((t) => ({ ...t, dayNumber: clampedDay })),
+      });
+    } else {
+      movableCards.push(card);
+    }
+  });
+
+  // Sort movable cards descending by durationMinutes (Longest Processing Time first) to pack bins evenly
+  const sortedMovable = [...movableCards].sort(
+    (a, b) => (b.durationMinutes || 0) - (a.durationMinutes || 0)
+  );
+
+  const movedCards: BoardCard[] = [];
+
+  sortedMovable.forEach((card) => {
+    const cardMins = card.durationMinutes || 0;
+
+    // Find the available day with capacity (current load + cardMins <= capacity) with minimum load,
+    // or if all exceed capacity, pick the available day with the absolute lowest current load.
+    let bestDay = availableDays[0];
+    let bestDayLoad = dayMinutes[bestDay] || 0;
+    let foundUnderCap = false;
+
+    for (const d of availableDays) {
+      const cap = dayCapacities[d] || 150;
+      const currentLoad = dayMinutes[d] || 0;
+
+      if (currentLoad + cardMins <= cap) {
+        if (!foundUnderCap || currentLoad < bestDayLoad) {
+          foundUnderCap = true;
+          bestDay = d;
+          bestDayLoad = currentLoad;
+        }
+      } else if (!foundUnderCap) {
+        if (currentLoad < bestDayLoad) {
+          bestDay = d;
+          bestDayLoad = currentLoad;
+        }
+      }
+    }
+
+    dayMinutes[bestDay] = (dayMinutes[bestDay] || 0) + cardMins;
+    movedCards.push({
+      ...card,
+      dayNumber: bestDay,
+      topics: card.topics?.map((t) => ({ ...t, dayNumber: bestDay })),
+    });
+  });
+
+  return [...fixedCards, ...movedCards];
+}
+
