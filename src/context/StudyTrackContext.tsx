@@ -110,10 +110,11 @@ interface StudyTrackContextType {
 
 const StudyTrackContext = createContext<StudyTrackContextType | undefined>(undefined);
 
-const ACTIVE_CHALLENGE_STORAGE_KEY = 'studytrack_active_challenge_id';
+const getActiveChallengeStorageKey = (uid: string) => `studytrack_active_challenge_id_${uid}`;
 
 export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user } = useAuth();
+  const prevUserUidRef = useRef<string | null>(user?.uid || null);
 
   // Active Challenge in Firestore (ID resolution: Firestore -> LocalState -> localStorage)
   const [activeChallengeId, setActiveChallengeId] = useState<string | null>(null);
@@ -136,7 +137,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
   // Boot-time optimistic cache (only once per user session)
   useEffect(() => {
     if (user && !activeChallengeId) {
-      const cached = localStorage.getItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      const cached = localStorage.getItem(getActiveChallengeStorageKey(user.uid));
       if (cached) setActiveChallengeId(cached);
     }
   }, [user]);
@@ -212,9 +213,14 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       setUserProgressDoc(null);
       setUserProgress({});
       setActiveChallengeId(null);
-      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      if (prevUserUidRef.current) {
+        localStorage.removeItem(getActiveChallengeStorageKey(prevUserUidRef.current));
+        prevUserUidRef.current = null;
+      }
       return;
     }
+
+    prevUserUidRef.current = user.uid;
 
     const unsubscribe = subscribeUserProgress(
       user.uid,
@@ -228,15 +234,15 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
           if (fsId !== activeChallengeIdRef.current) {
             setActiveChallengeId(fsId);
             if (fsId) {
-              localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, fsId);
+              localStorage.setItem(getActiveChallengeStorageKey(user.uid), fsId);
             } else {
-              localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+              localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
             }
           }
         } else {
           setUserProgress({});
           setActiveChallengeId(null);
-          localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+          localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
         }
       },
       (err) => {
@@ -260,7 +266,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       setActiveChallengeId(null);
       setActiveChallengeState(null);
       setTasks([]);
-      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
       updateActiveChallengeId(user.uid, null).catch(console.error);
     } else {
       // If it IS active, clear the ref so we can catch the next one
@@ -325,7 +331,9 @@ function getTopicAllocatedDayMap(
         if (!challengeDoc) {
           setActiveChallengeState(null);
           setTasks([]);
-          localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+          if (user) {
+            localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
+          }
           setActiveChallengeId(null);
           return;
         }
@@ -410,7 +418,9 @@ function getTopicAllocatedDayMap(
           setActiveChallengeState(null);
           setTasks([]);
           setActiveChallengeId(null);
-          localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+          if (user) {
+            localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
+          }
         }
       }
     );
@@ -582,6 +592,7 @@ function getTopicAllocatedDayMap(
     if (
       !user ||
       !activeChallenge ||
+      activeChallenge.created_by !== user.uid ||
       !activeChallenge.day_wise_allocation ||
       !activeChallenge.start_date
     ) {
@@ -647,9 +658,6 @@ function getTopicAllocatedDayMap(
     if (!targetTask || targetTask.isLocked || !isTaskPersisted(taskId)) return;
 
     // Optimistic UI update
-    const prevTasks = [...tasks];
-    const prevUserProgress = { ...userProgress };
-
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, theoryCompleted: !t.theoryCompleted } : t))
     );
@@ -665,9 +673,17 @@ function getTopicAllocatedDayMap(
       await toggleUserTopicProgress(user.uid, taskId, 'theory');
     } catch (err) {
       console.error('Failed to sync theory toggle to Firestore:', err);
-      // Rollback
-      setTasks(prevTasks);
-      setUserProgress(prevUserProgress);
+      // Functional rollback
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, theoryCompleted: !t.theoryCompleted } : t))
+      );
+      setUserProgress((prev) => {
+        const current = prev[taskId] || { theory: false, practice: false };
+        return {
+          ...prev,
+          [taskId]: { ...current, theory: !current.theory },
+        };
+      });
       triggerToast('Sync failed. Please check your connection.');
     }
   };
@@ -678,9 +694,6 @@ function getTopicAllocatedDayMap(
     if (!targetTask || targetTask.isLocked || !isTaskPersisted(taskId)) return;
 
     // Optimistic UI update
-    const prevTasks = [...tasks];
-    const prevUserProgress = { ...userProgress };
-
     setTasks((prev) =>
       prev.map((t) => (t.id === taskId ? { ...t, practiceCompleted: !t.practiceCompleted } : t))
     );
@@ -696,9 +709,17 @@ function getTopicAllocatedDayMap(
       await toggleUserTopicProgress(user.uid, taskId, 'practice');
     } catch (err) {
       console.error('Failed to sync practice toggle to Firestore:', err);
-      // Rollback
-      setTasks(prevTasks);
-      setUserProgress(prevUserProgress);
+      // Functional rollback
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, practiceCompleted: !t.practiceCompleted } : t))
+      );
+      setUserProgress((prev) => {
+        const current = prev[taskId] || { theory: false, practice: false };
+        return {
+          ...prev,
+          [taskId]: { ...current, practice: !current.practice },
+        };
+      });
       triggerToast('Sync failed. Please check your connection.');
     }
   };
@@ -708,9 +729,6 @@ function getTopicAllocatedDayMap(
     if (!user) return;
 
     // Optimistic update
-    const prevUserProgress = { ...userProgress };
-    const prevTasks = [...tasks];
-
     setUserProgress((prev) => {
       const current = prev[topicId] || { theory: false, practice: false };
       return {
@@ -728,8 +746,17 @@ function getTopicAllocatedDayMap(
       await toggleUserTopicProgress(user.uid, topicId, 'theory');
     } catch (err) {
       console.error('Failed to toggle HSC theory:', err);
-      setUserProgress(prevUserProgress);
-      setTasks(prevTasks);
+      // Functional rollback
+      setUserProgress((prev) => {
+        const current = prev[topicId] || { theory: false, practice: false };
+        return {
+          ...prev,
+          [topicId]: { ...current, theory: !current.theory },
+        };
+      });
+      setTasks((prev) =>
+        prev.map((t) => (t.id === topicId ? { ...t, theoryCompleted: !t.theoryCompleted } : t))
+      );
       triggerToast('Failed to save progress.');
     }
   };
@@ -738,9 +765,6 @@ function getTopicAllocatedDayMap(
     if (!user) return;
 
     // Optimistic update
-    const prevUserProgress = { ...userProgress };
-    const prevTasks = [...tasks];
-
     setUserProgress((prev) => {
       const current = prev[topicId] || { theory: false, practice: false };
       return {
@@ -758,8 +782,17 @@ function getTopicAllocatedDayMap(
       await toggleUserTopicProgress(user.uid, topicId, 'practice');
     } catch (err) {
       console.error('Failed to toggle HSC practice:', err);
-      setUserProgress(prevUserProgress);
-      setTasks(prevTasks);
+      // Functional rollback
+      setUserProgress((prev) => {
+        const current = prev[topicId] || { theory: false, practice: false };
+        return {
+          ...prev,
+          [topicId]: { ...current, practice: !current.practice },
+        };
+      });
+      setTasks((prev) =>
+        prev.map((t) => (t.id === topicId ? { ...t, practiceCompleted: !t.practiceCompleted } : t))
+      );
       triggerToast('Failed to save progress.');
     }
   };
@@ -779,10 +812,12 @@ function getTopicAllocatedDayMap(
     const topicIds = chapter.topics.map((t) => t.id);
     if (topicIds.length === 0) return;
 
-    // Build the updates object
+    // Build the updates object and capture previous state of target topics
+    const previousTopicStates: Record<string, boolean> = {};
     const batchUpdates: Record<string, { theory: boolean; practice: boolean }> = {};
     topicIds.forEach((topicId) => {
       const current = userProgress[topicId] || { theory: false, practice: false };
+      previousTopicStates[topicId] = Boolean(current[type]);
       batchUpdates[topicId] = {
         ...current,
         [type]: done,
@@ -790,14 +825,14 @@ function getTopicAllocatedDayMap(
     });
 
     // Optimistic local state update
-    const prevUserProgress = { ...userProgress };
-    const prevTasks = [...tasks];
-
-    // Update userProgress state
     setUserProgress((prev) => {
       const next = { ...prev };
       topicIds.forEach((topicId) => {
-        next[topicId] = batchUpdates[topicId];
+        const current = prev[topicId] || { theory: false, practice: false };
+        next[topicId] = {
+          ...current,
+          [type]: done,
+        };
       });
       return next;
     });
@@ -819,8 +854,30 @@ function getTopicAllocatedDayMap(
       await setUserTopicProgressBatch(user.uid, batchUpdates);
     } catch (err) {
       console.error('Failed to set chapter progress batch:', err);
-      setUserProgress(prevUserProgress);
-      setTasks(prevTasks);
+      // Functional rollback for only the specific topics touched by this call
+      setUserProgress((prev) => {
+        const next = { ...prev };
+        topicIds.forEach((topicId) => {
+          const current = prev[topicId] || { theory: false, practice: false };
+          next[topicId] = {
+            ...current,
+            [type]: previousTopicStates[topicId] ?? !done,
+          };
+        });
+        return next;
+      });
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (topicIds.includes(t.id)) {
+            return {
+              ...t,
+              [type === 'theory' ? 'theoryCompleted' : 'practiceCompleted']:
+                previousTopicStates[t.id] ?? !done,
+            };
+          }
+          return t;
+        })
+      );
       triggerToast('Failed to sync chapter progress. Please try again.');
     }
   };
@@ -928,13 +985,20 @@ function getTopicAllocatedDayMap(
 
       await addJoinedChallengeId(user.uid, challengeDoc.challenge_id);
 
-      // Persist the change to user_progress FIRST (await the write)
-      await updateActiveChallengeId(user.uid, challengeDoc.challenge_id);
+      const hasPersonalActiveChallenge = Boolean(
+        activeChallenge ? isChallengeActive(activeChallenge) : (activeChallengeId || activeChallengeIdRef.current)
+      );
 
-      // Settle path / fallback: update local state after write resolves so stale snapshot cannot revert
-      if (activeChallengeIdRef.current !== challengeDoc.challenge_id) {
-        setActiveChallengeId(challengeDoc.challenge_id);
-        localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, challengeDoc.challenge_id);
+      // Only set as active challenge if user has no active personal challenge
+      if (!hasPersonalActiveChallenge) {
+        // Persist the change to user_progress FIRST (await the write)
+        await updateActiveChallengeId(user.uid, challengeDoc.challenge_id);
+
+        // Settle path / fallback: update local state after write resolves so stale snapshot cannot revert
+        if (activeChallengeIdRef.current !== challengeDoc.challenge_id) {
+          setActiveChallengeId(challengeDoc.challenge_id);
+          localStorage.setItem(getActiveChallengeStorageKey(user.uid), challengeDoc.challenge_id);
+        }
       }
 
       setAttachedRoomId(challengeDoc.challenge_id);
@@ -960,7 +1024,9 @@ function getTopicAllocatedDayMap(
     setActiveChallengeState(newChallenge);
     setAttachedRoomId(null);
     setAttachedRoomChallenge(null);
-    localStorage.setItem(ACTIVE_CHALLENGE_STORAGE_KEY, newChallenge.challenge_id);
+    if (user) {
+      localStorage.setItem(getActiveChallengeStorageKey(user.uid), newChallenge.challenge_id);
+    }
   };
 
   // Main Dashboard Calculations
@@ -1321,7 +1387,7 @@ function getTopicAllocatedDayMap(
       setActiveChallengeId(null);
       setActiveChallengeState(null);
       setTasks([]);
-      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
       triggerToast('Sprint challenge archived.');
     } catch (err) {
       console.error('Failed to archive challenge:', err);
@@ -1342,7 +1408,7 @@ function getTopicAllocatedDayMap(
       setActiveChallengeId(null);
       setActiveChallengeState(null);
       setTasks([]);
-      localStorage.removeItem(ACTIVE_CHALLENGE_STORAGE_KEY);
+      localStorage.removeItem(getActiveChallengeStorageKey(user.uid));
       triggerToast('Sprint challenge deleted.');
     } catch (err) {
       console.error('Failed to delete challenge:', err);

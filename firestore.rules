@@ -50,6 +50,17 @@ service cloud.firestore {
         data.chapters is list && data.chapters.size() <= 100;
     }
 
+    function isValidChallenge(data) {
+      return data.duration is number && data.duration >= 1 && data.duration <= 365 &&
+        data.code is string && data.code.size() > 0 && data.code.size() <= 32 && data.code.matches('^[a-zA-Z0-9_-]+$') &&
+        data.start_date is string && data.start_date.size() <= 64 &&
+        data.challenge_name is string && data.challenge_name.size() <= 128 &&
+        data.created_by == request.auth.uid &&
+        data.selected_syllabus is list && data.selected_syllabus.size() <= 200 &&
+        data.participants is list && data.participants.size() > 0 && data.participants.size() <= 100 &&
+        data.participants[0].uid == request.auth.uid;
+    }
+
     function isLinkedPeer(userId) {
       let pairA = request.auth.uid + '_' + userId;
       let pairB = userId + '_' + request.auth.uid;
@@ -98,6 +109,12 @@ service cloud.firestore {
       allow get, list: if isSignedIn() && (request.auth.uid in existing().uids || isAdmin());
       allow create: if isSignedIn() && (
         incoming().requestedBy == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().uids is list &&
+        incoming().uids.size() == 2 &&
+        incoming().uids[0] is string &&
+        incoming().uids[1] is string &&
+        incoming().uids[0] != incoming().uids[1] &&
         request.auth.uid in incoming().uids
       );
       allow update: if isSignedIn() && (
@@ -110,15 +127,15 @@ service cloud.firestore {
     // Challenges collection (Real-time cohort sprint coordination)
     match /challenges/{challengeId} {
       allow get, list: if isSignedIn();
-      allow create: if isValidId(challengeId) && isSignedIn() && incoming().created_by == request.auth.uid;
-      allow update: if isValidId(challengeId) && isSignedIn();
+      allow create: if isValidId(challengeId) && isSignedIn() && isValidChallenge(incoming());
+      allow update: if isValidId(challengeId) && (isAdmin() || (isSignedIn() && existing().created_by == request.auth.uid));
       allow delete: if isValidId(challengeId) && (isAdmin() || (isSignedIn() && existing().created_by == request.auth.uid));
     }
     
     // Weekly progress snapshots for comparison
     match /weekly_snapshots/{snapshotId} {
       allow get, list: if isSignedIn();
-      allow create, update: if isSignedIn() && (incoming().uid == request.auth.uid || isAdmin());
+      allow create, update: if isSignedIn() && (incoming().uid == request.auth.uid || isAdmin()) && incoming().uid + '_' + incoming().weekKey == snapshotId;
       allow delete: if isAdmin();
     }
 

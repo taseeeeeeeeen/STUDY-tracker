@@ -1687,11 +1687,22 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           {/* Duration Cards: unselected by default */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div
-              onClick={() => setDuration(7)}
-              className={`relative bg-white rounded-2xl p-6 cursor-pointer transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+              onClick={() => {
+                if (isChallengeSaved) {
+                  showToast('Sprint duration cannot be changed after saving.', 'info');
+                  return;
+                }
+                setDuration(7);
+              }}
+              title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
+              className={`relative bg-white rounded-2xl p-6 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+                isChallengeSaved
+                  ? 'cursor-not-allowed opacity-60'
+                  : 'cursor-pointer hover:shadow-md'
+              } ${
                 duration === 7
                   ? 'ring-2 ring-blue-600 bg-gradient-to-br from-blue-50/40 via-white to-white shadow-md'
-                  : 'hover:shadow-md border border-[#c0c9c0]/30 opacity-80'
+                  : 'border border-[#c0c9c0]/30 opacity-80'
               }`}
             >
               <div className="flex items-center gap-3 mb-3">
@@ -1711,11 +1722,22 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
             </div>
 
             <div
-              onClick={() => setDuration(30)}
-              className={`relative bg-white rounded-2xl p-6 cursor-pointer transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+              onClick={() => {
+                if (isChallengeSaved) {
+                  showToast('Sprint duration cannot be changed after saving.', 'info');
+                  return;
+                }
+                setDuration(30);
+              }}
+              title={isChallengeSaved ? 'Sprint duration cannot be changed after saving' : undefined}
+              className={`relative bg-white rounded-2xl p-6 transition-all duration-200 shadow-xs flex flex-col justify-between group ${
+                isChallengeSaved
+                  ? 'cursor-not-allowed opacity-60'
+                  : 'cursor-pointer hover:shadow-md'
+              } ${
                 duration === 30
                   ? 'ring-2 ring-blue-600 bg-gradient-to-br from-blue-50/40 via-white to-white shadow-md'
-                  : 'hover:shadow-md border border-[#c0c9c0]/30 opacity-80'
+                  : 'border border-[#c0c9c0]/30 opacity-80'
               }`}
             >
               <div className="flex items-center gap-3 mb-3">
@@ -1755,12 +1777,22 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 <label className="text-xs font-bold text-[#0b1c30]">
                   Select Starting Date <span className="text-red-500">*</span>
                 </label>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div
+                  className="flex flex-col sm:flex-row sm:items-center gap-3"
+                  onClick={() => {
+                    if (isChallengeSaved) {
+                      showToast('Start date cannot be changed after saving.', 'info');
+                    }
+                  }}
+                  title={isChallengeSaved ? 'Start date cannot be changed after saving' : undefined}
+                >
                   <input
                     type="date"
+                    disabled={isChallengeSaved}
                     min={todayDateString}
                     value={startDate || ''}
                     onChange={(e) => {
+                      if (isChallengeSaved) return;
                       const selected = e.target.value;
                       if (selected && selected < todayDateString) {
                         showToast('Start date cannot be in the past.', 'error');
@@ -1769,7 +1801,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                       }
                       setStartDate(selected || null);
                     }}
-                    className="w-full sm:w-auto bg-[#eff4ff]/60 hover:bg-[#eff4ff] focus:bg-white border border-[#c0c9c0]/60 focus:border-[#003820] rounded-xl px-4 py-2.5 text-xs text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#003820]/20 transition-all font-medium cursor-pointer"
+                    className={`w-full sm:w-auto bg-[#eff4ff]/60 border border-[#c0c9c0]/60 rounded-xl px-4 py-2.5 text-xs text-[#0b1c30] transition-all font-medium ${
+                      isChallengeSaved
+                        ? 'cursor-not-allowed opacity-60 bg-gray-50'
+                        : 'hover:bg-[#eff4ff] focus:bg-white focus:border-[#003820] focus:outline-none focus:ring-2 focus:ring-[#003820]/20 cursor-pointer'
+                    }`}
                   />
                   {formattedEndDate && (
                     <div className="px-3.5 py-2 rounded-xl bg-[#eff4ff] text-[#003820] text-xs font-semibold border border-[#c0c9c0]/40 flex items-center gap-1.5 shrink-0">
