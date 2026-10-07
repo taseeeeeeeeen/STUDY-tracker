@@ -336,6 +336,18 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           };
         }) as SyllabusItem[];
 
+        if (userEditedSyllabusRef.current) {
+          // Keep user's local selection state intact; do not overwrite with remote challenge state
+          setSyllabus((prev) => {
+            const prevMap = new Map(prev.map((p) => [p.id, p.checked]));
+            return dedupedItems.map((item) => ({
+              ...item,
+              checked: prevMap.has(item.id) ? Boolean(prevMap.get(item.id)) : false,
+            }));
+          });
+          return;
+        }
+
         const challengeToUse =
           loadedChallenge && loadedChallenge.status !== 'archived'
             ? loadedChallenge
@@ -371,30 +383,34 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Track order in which chapters were selected
   const chapterOrderRef = useRef<string[]>(initialRestored.order);
-  const hasHydratedRef = useRef(Boolean(initialChallenge));
+  const userEditedSyllabusRef = useRef(false);
+  const hasPromptedResumeRef = useRef(false);
   const savedAllocationRef = useRef<Record<string, BoardCard[]> | null>(
     (initialChallenge?.day_wise_allocation as Record<string, BoardCard[]>) || null
   );
   const [loadingChallenge, setLoadingChallenge] = useState(!initialChallenge);
   const [loadedChallenge, setLoadedChallenge] = useState<FirestoreChallenge | null>(initialChallenge);
 
-  // Sync active challenge from context if available
-  useEffect(() => {
-    if (activeChallenge && activeChallenge.status !== 'archived') {
-      loadChallengeIntoWizard(activeChallenge);
-    }
-  }, [activeChallenge]);
-
-  // Fetch active personal challenge if not already in context
+  // Sync active challenge from context or Firestore: prompt user instead of silently auto-loading
   useEffect(() => {
     if (!user) {
       setLoadingChallenge(false);
       return;
     }
 
+    if (initialChallenge) {
+      loadChallengeIntoWizard(initialChallenge, true);
+      setLoadingChallenge(false);
+      return;
+    }
+
+    if (hasPromptedResumeRef.current) return;
+
     if (activeChallenge && activeChallenge.status !== 'archived') {
       setLoadedChallenge(activeChallenge);
       setLoadingChallenge(false);
+      hasPromptedResumeRef.current = true;
+      setActiveChallengeConflict(activeChallenge);
       return;
     }
 
@@ -404,7 +420,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         if (isMounted) {
           if (doc && doc.status !== 'archived') {
             setLoadedChallenge(doc);
-            loadChallengeIntoWizard(doc);
+            hasPromptedResumeRef.current = true;
+            setActiveChallengeConflict(doc);
           } else {
             setLoadedChallenge(null);
           }
@@ -419,10 +436,13 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [user, activeChallenge]);
+  }, [user, activeChallenge, initialChallenge]);
 
   // Helper to load an existing active challenge into the wizard
-  const loadChallengeIntoWizard = (challengeDoc: FirestoreChallenge) => {
+  const loadChallengeIntoWizard = (challengeDoc: FirestoreChallenge, isExplicitAction = false) => {
+    if (isExplicitAction) {
+      userEditedSyllabusRef.current = false;
+    }
     setChallengeName(challengeDoc.challenge_name || '');
     if (challengeDoc.duration) {
       const dur = challengeDoc.duration as SprintDuration;
@@ -465,30 +485,22 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     );
   };
 
-  // Gated Hydration: Run ONCE when BOTH syllabus and challenge data are ready
+  // Gated Hydration: Only run when an explicit initialChallenge was passed
   useEffect(() => {
     if (!user) return;
     if (loadingSyllabus || loadingChallenge) return;
-    if (hasHydratedRef.current) return;
 
-    const challengeToResume = loadedChallenge || activeChallenge;
-    if (challengeToResume && challengeToResume.status !== 'archived') {
-      hasHydratedRef.current = true;
-      loadChallengeIntoWizard(challengeToResume);
-    } else {
-      // No active challenge to resume
-      hasHydratedRef.current = true;
+    if (initialChallenge && initialChallenge.status !== 'archived') {
+      loadChallengeIntoWizard(initialChallenge, true);
     }
-  }, [user, loadingSyllabus, loadingChallenge, loadedChallenge, activeChallenge]);
+  }, [user, loadingSyllabus, loadingChallenge, initialChallenge]);
 
   // Update DnD board cards whenever selected syllabus changes: chapter-level grouping with capacity-aware allocation
   useEffect(() => {
     const selected = syllabus.filter((s) => s.checked);
     if (selected.length === 0) {
-      if (!isChallengeSaved) {
-        setBoardCards([]);
-        chapterOrderRef.current = [];
-      }
+      setBoardCards([]);
+      chapterOrderRef.current = [];
       return;
     }
 
@@ -519,22 +531,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     const numCols = columns.length || (typeof duration === 'number' && duration > 0 ? duration : 7);
     const firstNonPastDay = isChallengeSaved ? Math.min(numCols, Math.max(1, currentDay)) : 1;
 
-    // DIRECTIVE: Once isChallengeSaved is true, stop rebuilding boardCards from the syllabus selection;
-    // only apply selection changes to cards that are not yet on the board, and preserve each card's existing dayNumber.
+    // Once isChallengeSaved is true, boardCards are preserved and updated explicitly via handleAddSyllabusTopicsToSavedChallenge or removals
     if (isChallengeSaved) {
-      if (boardCards.length === 0) {
-        const targetAllocation =
-          savedAllocationRef.current || (loadedChallenge || activeChallenge)?.day_wise_allocation;
-        if (targetAllocation) {
-          const { cards, order } = parseCardsFromAllocation(
-            targetAllocation as Record<string, unknown[]>
-          );
-          if (cards.length > 0) {
-            setBoardCards(cards);
-            if (order.length > 0) chapterOrderRef.current = order;
-          }
-        }
-      }
       return;
     }
 
@@ -874,11 +872,123 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     showToast('Workload balanced evenly across days.', 'success');
   };
 
+  const handleResetSelectedSyllabus = async () => {
+    const confirmed = window.confirm(
+      "Reset all selected syllabus topics for this challenge? You'll pick new topics in Step 2."
+    );
+    if (!confirmed) return;
+
+    userEditedSyllabusRef.current = true;
+
+    // 1. Local state update
+    setSyllabus((prev) => prev.map((item) => ({ ...item, checked: false })));
+    setBoardCards([]);
+    chapterOrderRef.current = [];
+    savedAllocationRef.current = null;
+
+    // 2. Persistence strictly per-user: if the challenge was created by this user
+    const creatorUid =
+      challengePayload?.created_by ||
+      activeChallenge?.created_by ||
+      loadedChallenge?.created_by;
+
+    if (isChallengeSaved && savedChallengeId && user && creatorUid === user.uid) {
+      try {
+        const numCols =
+          columns.length || (typeof duration === 'number' && duration > 0 ? duration : 7);
+        const emptyAllocation: Record<string, BoardCard[]> = {};
+        for (let i = 1; i <= numCols; i++) {
+          emptyAllocation[`Day ${i}`] = [];
+        }
+
+        const existingParticipants =
+          challengePayload?.participants ||
+          activeChallenge?.participants ||
+          loadedChallenge?.participants ||
+          [];
+        const updatedParticipants = existingParticipants.map((p: any) => ({
+          ...p,
+          total_challenge_topics: 0,
+        }));
+
+        await updateChallengeSyllabus(
+          savedChallengeId,
+          [],
+          updatedParticipants,
+          emptyAllocation
+        );
+
+        savedAllocationRef.current = emptyAllocation;
+        const updatedPayload = {
+          ...(challengePayload || activeChallenge || loadedChallenge),
+          selected_syllabus: [],
+          participants: updatedParticipants,
+          day_wise_allocation: emptyAllocation,
+          totalTopics: 0,
+        };
+        setChallengePayload(updatedPayload as any);
+        setLoadedChallenge(updatedPayload as any);
+        if (activeChallenge && activeChallenge.challenge_id === savedChallengeId) {
+          setActiveChallenge({
+            ...activeChallenge,
+            selected_syllabus: [],
+            participants: updatedParticipants,
+            day_wise_allocation: emptyAllocation,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to persist syllabus reset to database:', err);
+        showToast('Failed to save syllabus reset to database.', 'error');
+        return;
+      }
+    }
+
+    showToast("Syllabus reset. Go to Step 2 to select new topics.", 'success');
+  };
+
   // Helper to execute challenge persistence once uniqueness check passes
   const executeCreateChallenge = async (selectedSyllabusItems: SyllabusItem[]) => {
     setIsCreatingChallenge(true);
     try {
+      if (!user || !user.uid) {
+        showToast('Pre-flight check failed: You must be signed in to create a challenge.', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
+
+      const numDuration = Number(duration);
+      if (isNaN(numDuration) || numDuration < 1 || numDuration > 365) {
+        showToast('Pre-flight check failed: Duration must be a number between 1 and 365 days.', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
+
+      const trimmedName = challengeName.trim();
+      if (!trimmedName || trimmedName.length > 128) {
+        showToast('Pre-flight check failed: Challenge name must be between 1 and 128 characters.', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
+
+      if (!startDate || typeof startDate !== 'string' || startDate.length > 64) {
+        showToast('Pre-flight check failed: Valid start date is required.', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
+
       const strictlyCheckedItems = selectedSyllabusItems.filter((item) => item.checked);
+      if (strictlyCheckedItems.length === 0) {
+        showToast('Pre-flight check failed: Please select at least 1 topic.', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
+
+      if (strictlyCheckedItems.length > 200) {
+        showToast('Pre-flight check failed: Syllabus cannot exceed 200 topics.', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
+
       const dayWiseAllocation: Record<string, BoardCard[]> = {};
       columns.forEach((col) => {
         dayWiseAllocation[`Day ${col.dayNumber}`] = boardCards.filter(
@@ -894,13 +1004,13 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
       const structuredPayload = {
         challenge_id: challengeIdToUse,
-        challenge_name: challengeName.trim(),
-        created_by: user!.uid,
-        creator_name: user!.name,
-        duration: duration!,
-        start_date: getLocalMidnightIso(startDate!),
+        challenge_name: trimmedName,
+        created_by: user.uid,
+        creator_name: user.name || 'Student',
+        duration: numDuration,
+        start_date: getLocalMidnightIso(startDate),
         end_date: computedEndDateIso || undefined,
-        code: typeof challengePayload?.code === 'string' ? challengePayload.code : undefined,
+        code: savedChallengeId && typeof challengePayload?.code === 'string' ? challengePayload.code : undefined,
         selected_syllabus: strictlyCheckedItems.map((s) => ({
           id: s.id,
           subject: s.subject,
@@ -912,14 +1022,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         day_wise_allocation: dayWiseAllocation,
         participants: [
           {
-            uid: user!.uid,
-            name: user!.name,
-            email: user!.email,
-            photoURL: user!.photoURL,
+            uid: user.uid,
+            name: user.name || 'Student',
+            email: user.email || '',
+            photoURL: user.photoURL || undefined,
             completed_topics: 0,
             total_challenge_topics: strictlyCheckedItems.length,
             last_completion_timestamp: Date.now(),
-            joined_at: challengePayload?.participants?.[0]?.joined_at || new Date().toISOString(),
+            joined_at: (savedChallengeId && challengePayload?.participants?.[0]?.joined_at) || new Date().toISOString(),
           },
         ],
       };
@@ -927,7 +1037,12 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       const savedChallenge = await createFirestoreChallenge(structuredPayload);
 
       // Set as active challenge in global app context
-      setActiveChallenge(savedChallenge);
+      try {
+        await setActiveChallenge(savedChallenge);
+      } catch (ctxErr) {
+        console.warn('Warning: Could not sync active challenge id to profile:', ctxErr);
+      }
+
       setSavedChallengeId(savedChallenge.challenge_id);
       setIsChallengeSaved(true);
       savedAllocationRef.current = dayWiseAllocation;
@@ -937,11 +1052,31 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         totalTopics: strictlyCheckedItems.length,
         totalEstimatedHours,
       });
+      setLoadedChallenge(savedChallenge);
+      userEditedSyllabusRef.current = false;
       setIsStartModalOpen(true);
-      showToast('Challenge saved to Firestore! Schedule board is unlocked.', 'success');
+      showToast(`Challenge "${savedChallenge.challenge_name}" created! Code: ${savedChallenge.code}`, 'success');
     } catch (error) {
       console.error('Failed to save challenge to Firestore:', error);
-      showToast('Failed to save challenge to cloud database.', 'error');
+      let errorDetails = 'Failed to save challenge to cloud database.';
+      if (error instanceof Error) {
+        try {
+          const parsed = JSON.parse(error.message);
+          const rawErr = parsed.error || '';
+          if (rawErr.includes('permission-denied') || rawErr.includes('PERMISSION_DENIED')) {
+            errorDetails = 'Permission denied by database security rules. Please check your challenge details.';
+          } else if (rawErr.includes('not-found')) {
+            errorDetails = 'Database path not found.';
+          } else if (rawErr.includes('unavailable')) {
+            errorDetails = 'Database connection unavailable. Please check your network.';
+          } else if (rawErr) {
+            errorDetails = `Database error: ${rawErr}`;
+          }
+        } catch {
+          errorDetails = error.message;
+        }
+      }
+      showToast(errorDetails, 'error');
     } finally {
       setIsCreatingChallenge(false);
     }
@@ -956,115 +1091,154 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       loadedChallenge?.selected_syllabus ||
       [];
     const savedIds = new Set(currentSavedSyllabus.map((s: { id: string }) => s.id));
-    const newlyChecked = syllabus.filter((item) => item.checked && !savedIds.has(item.id));
+    const currentlyChecked = syllabus.filter((item) => item.checked);
+    const currentlyCheckedIds = new Set(currentlyChecked.map((s) => s.id));
 
-    if (newlyChecked.length === 0) {
+    const newlyChecked = currentlyChecked.filter((item) => !savedIds.has(item.id));
+    const removedIds = new Set(
+      currentSavedSyllabus
+        .filter((s: { id: string }) => !currentlyCheckedIds.has(s.id))
+        .map((s: { id: string }) => s.id)
+    );
+
+    // If there are no additions and no removals, no-op
+    if (newlyChecked.length === 0 && removedIds.size === 0) {
       return;
     }
 
     setIsCreatingChallenge(true);
     try {
-      const numCols = columns.length || 7;
+      const numCols = columns.length || (typeof duration === 'number' && duration > 0 ? duration : 7);
       const firstNonPastDay = Math.min(numCols, Math.max(1, currentDay));
-      const dayAllocatedMinutes: Record<number, number> = {};
-      for (let d = 1; d <= numCols; d++) {
-        dayAllocatedMinutes[d] = 0;
-      }
+
+      // 1. Filter existing boardCards to remove unchecked topics/cards
+      let updatedCards: BoardCard[] = [];
       boardCards.forEach((c) => {
-        if (c.dayNumber >= 1 && c.dayNumber <= numCols) {
-          dayAllocatedMinutes[c.dayNumber] =
-            (dayAllocatedMinutes[c.dayNumber] || 0) + (c.durationMinutes || 0);
-        }
-      });
-
-      const findDayForNewTopic = (neededMinutes: number): number => {
-        for (let d = firstNonPastDay; d <= numCols; d++) {
-          const col = columns.find((c) => c.dayNumber === d);
-          const cap = col?.capacityMinutes || 150;
-          const currentLoad = dayAllocatedMinutes[d] || 0;
-          if (currentLoad + neededMinutes <= cap) {
-            dayAllocatedMinutes[d] = currentLoad + neededMinutes;
-            return d;
+        if (c.topics && c.topics.length > 0) {
+          const remainingTopics = c.topics.filter((t) => !removedIds.has(t.id));
+          if (remainingTopics.length > 0) {
+            const remainingDuration = remainingTopics.reduce(
+              (sum, t) => sum + (t.durationMinutes || 0),
+              0
+            );
+            updatedCards.push({
+              ...c,
+              topics: remainingTopics,
+              durationMinutes: remainingDuration,
+              tag: `${remainingTopics.length} ${remainingTopics.length === 1 ? 'topic' : 'topics'}`,
+            });
           }
-        }
-        let minDay = firstNonPastDay;
-        let minLoad = dayAllocatedMinutes[firstNonPastDay] || 0;
-        for (let d = firstNonPastDay + 1; d <= numCols; d++) {
-          const currentLoad = dayAllocatedMinutes[d] || 0;
-          if (currentLoad < minLoad) {
-            minLoad = currentLoad;
-            minDay = d;
-          }
-        }
-        dayAllocatedMinutes[minDay] = (dayAllocatedMinutes[minDay] || 0) + neededMinutes;
-        return minDay;
-      };
-
-      const updatedCards = [...boardCards];
-      const newGroups = new Map<
-        string,
-        { chapterId: string; chapterName: string; subject: string; topics: SyllabusItem[] }
-      >();
-
-      newlyChecked.forEach((item) => {
-        const chId = item.chapterId || item.chapterName || item.subject;
-        if (!newGroups.has(chId)) {
-          newGroups.set(chId, {
-            chapterId: item.chapterId || chId,
-            chapterName: item.chapterName || item.title,
-            subject: item.subject,
-            topics: [],
-          });
-        }
-        newGroups.get(chId)!.topics.push(item);
-      });
-
-      newGroups.forEach((group) => {
-        const groupDuration = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
-        const targetDay = findDayForNewTopic(groupDuration);
-        const boardTopics: BoardTopic[] = group.topics.map((t) => ({
-          id: t.id,
-          title: t.title,
-          subconcept: t.subconcept || '',
-          durationMinutes: t.durationMinutes || 45,
-          dayNumber: targetDay,
-          tag: t.tag,
-        }));
-
-        const existingCardIdx = updatedCards.findIndex(
-          (c) =>
-            c.dayNumber === targetDay &&
-            (c.chapterId === group.chapterId || c.chapterName === group.chapterName)
-        );
-
-        if (existingCardIdx >= 0) {
-          const existingCard = updatedCards[existingCardIdx];
-          const mergedTopics = [...(existingCard.topics || []), ...boardTopics];
-          const mergedDuration = mergedTopics.reduce(
-            (acc, t) => acc + (t.durationMinutes || 0),
-            0
-          );
-          updatedCards[existingCardIdx] = {
-            ...existingCard,
-            topics: mergedTopics,
-            durationMinutes: mergedDuration,
-          };
         } else {
-          const newCard: BoardCard = {
-            id: `chapter-${group.chapterId}-${targetDay}-${Date.now()}`,
-            chapterId: group.chapterId,
-            chapterName: group.chapterName,
-            subject: group.subject,
-            title: group.chapterName,
-            tag: group.topics[0]?.tag || '',
-            dayNumber: targetDay,
-            durationMinutes: groupDuration,
-            topics: boardTopics,
-          };
-          updatedCards.push(newCard);
+          const cardTopicId = c.id?.replace(/^card-/, '') || c.id;
+          if (!removedIds.has(cardTopicId) && !removedIds.has(c.id)) {
+            updatedCards.push(c);
+          }
         }
       });
 
+      // 2. Allocate newly checked topics into updatedCards if any
+      if (newlyChecked.length > 0) {
+        const dayAllocatedMinutes: Record<number, number> = {};
+        for (let d = 1; d <= numCols; d++) {
+          dayAllocatedMinutes[d] = 0;
+        }
+        updatedCards.forEach((c) => {
+          if (c.dayNumber >= 1 && c.dayNumber <= numCols) {
+            dayAllocatedMinutes[c.dayNumber] =
+              (dayAllocatedMinutes[c.dayNumber] || 0) + (c.durationMinutes || 0);
+          }
+        });
+
+        const findDayForNewTopic = (neededMinutes: number): number => {
+          for (let d = firstNonPastDay; d <= numCols; d++) {
+            const col = columns.find((c) => c.dayNumber === d);
+            const cap = col?.capacityMinutes || 150;
+            const currentLoad = dayAllocatedMinutes[d] || 0;
+            if (currentLoad + neededMinutes <= cap) {
+              dayAllocatedMinutes[d] = currentLoad + neededMinutes;
+              return d;
+            }
+          }
+          let minDay = firstNonPastDay;
+          let minLoad = dayAllocatedMinutes[firstNonPastDay] || 0;
+          for (let d = firstNonPastDay + 1; d <= numCols; d++) {
+            const currentLoad = dayAllocatedMinutes[d] || 0;
+            if (currentLoad < minLoad) {
+              minLoad = currentLoad;
+              minDay = d;
+            }
+          }
+          dayAllocatedMinutes[minDay] = (dayAllocatedMinutes[minDay] || 0) + neededMinutes;
+          return minDay;
+        };
+
+        const newGroups = new Map<
+          string,
+          { chapterId: string; chapterName: string; subject: string; topics: SyllabusItem[] }
+        >();
+
+        newlyChecked.forEach((item) => {
+          const chId = item.chapterId || item.chapterName || item.subject;
+          if (!newGroups.has(chId)) {
+            newGroups.set(chId, {
+              chapterId: item.chapterId || chId,
+              chapterName: item.chapterName || item.title,
+              subject: item.subject,
+              topics: [],
+            });
+          }
+          newGroups.get(chId)!.topics.push(item);
+        });
+
+        newGroups.forEach((group) => {
+          const groupDuration = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
+          const targetDay = findDayForNewTopic(groupDuration);
+          const boardTopics: BoardTopic[] = group.topics.map((t) => ({
+            id: t.id,
+            title: t.title,
+            subconcept: t.subconcept || '',
+            durationMinutes: t.durationMinutes || 45,
+            dayNumber: targetDay,
+            tag: t.tag,
+          }));
+
+          const existingCardIdx = updatedCards.findIndex(
+            (c) =>
+              c.dayNumber === targetDay &&
+              (c.chapterId === group.chapterId || c.chapterName === group.chapterName)
+          );
+
+          if (existingCardIdx >= 0) {
+            const existingCard = updatedCards[existingCardIdx];
+            const mergedTopics = [...(existingCard.topics || []), ...boardTopics];
+            const mergedDuration = mergedTopics.reduce(
+              (acc, t) => acc + (t.durationMinutes || 0),
+              0
+            );
+            updatedCards[existingCardIdx] = {
+              ...existingCard,
+              topics: mergedTopics,
+              durationMinutes: mergedDuration,
+              tag: `${mergedTopics.length} ${mergedTopics.length === 1 ? 'topic' : 'topics'}`,
+            };
+          } else {
+            const newCard: BoardCard = {
+              id: `chapter-${group.chapterId}-${targetDay}-${Date.now()}`,
+              chapterId: group.chapterId,
+              chapterName: group.chapterName,
+              subject: group.subject,
+              title: group.chapterName,
+              tag: `${boardTopics.length} ${boardTopics.length === 1 ? 'topic' : 'topics'}`,
+              dayNumber: targetDay,
+              durationMinutes: groupDuration,
+              topics: boardTopics,
+            };
+            updatedCards.push(newCard);
+          }
+        });
+      }
+
+      // 3. Rebuild dayWiseAllocation
       const dayWiseAllocation: Record<string, BoardCard[]> = {};
       columns.forEach((col) => {
         dayWiseAllocation[`Day ${col.dayNumber}`] = updatedCards.filter(
@@ -1072,7 +1246,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         );
       });
 
-      const newlySelectedFormatted = newlyChecked.map((s) => ({
+      // 4. Format updated syllabus matching exactly the currently checked topics
+      const updatedSyllabus = currentlyChecked.map((s) => ({
         id: s.id,
         subject: s.subject,
         title: s.title,
@@ -1080,7 +1255,6 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         durationMinutes: s.durationMinutes,
         tag: s.tag,
       }));
-      const updatedSyllabus = [...currentSavedSyllabus, ...newlySelectedFormatted];
 
       const existingParticipants =
         challengePayload?.participants ||
@@ -1109,6 +1283,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         totalTopics: updatedSyllabus.length,
       };
       setChallengePayload(updatedPayload as any);
+      setLoadedChallenge(updatedPayload as any);
       if (activeChallenge && activeChallenge.challenge_id === savedChallengeId) {
         setActiveChallenge({
           ...activeChallenge,
@@ -1117,13 +1292,19 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           day_wise_allocation: dayWiseAllocation,
         });
       }
-      showToast(
-        `Added ${newlyChecked.length} topic${newlyChecked.length > 1 ? 's' : ''} to challenge!`,
-        'success'
-      );
+      userEditedSyllabusRef.current = false;
+
+      const changeSummary: string[] = [];
+      if (newlyChecked.length > 0) {
+        changeSummary.push(`added ${newlyChecked.length} topic${newlyChecked.length > 1 ? 's' : ''}`);
+      }
+      if (removedIds.size > 0) {
+        changeSummary.push(`removed ${removedIds.size} topic${removedIds.size > 1 ? 's' : ''}`);
+      }
+      showToast(`Challenge saved: ${changeSummary.join(', ')}!`, 'success');
     } catch (error) {
-      console.error('Failed to add topics to saved challenge:', error);
-      showToast('Failed to save additional topics.', 'error');
+      console.error('Failed to update challenge syllabus:', error);
+      showToast('Failed to save changes to challenge.', 'error');
     } finally {
       setIsCreatingChallenge(false);
     }
@@ -1134,6 +1315,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       `Are you sure you want to remove "${topicTitle || 'this topic'}" from your sprint?`
     );
     if (!confirmed) return;
+
+    userEditedSyllabusRef.current = true;
 
     // 1. Uncheck in syllabus
     setSyllabus((prev) =>
@@ -1238,6 +1421,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       `Are you sure you want to remove "${cardTitle}" from your sprint?`
     );
     if (!confirmed) return;
+
+    userEditedSyllabusRef.current = true;
 
     // 1. Uncheck in syllabus
     setSyllabus((prev) =>
@@ -1409,12 +1594,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Syllabus selection helpers
   const handleToggleSyllabus = (id: string) => {
+    userEditedSyllabusRef.current = true;
     setSyllabus((prev) =>
       prev.map((s) => (s.id === id ? { ...s, checked: !s.checked } : s))
     );
   };
 
   const handleToggleChapterSyllabus = (_chapterId: string, chapterTopics: { id: string }[], allChecked: boolean) => {
+    userEditedSyllabusRef.current = true;
     const topicIds = chapterTopics.map((t) => t.id);
     setSyllabus((prev) =>
       prev.map((s) => {
@@ -1427,6 +1614,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   };
 
   const handleToggleSubjectSyllabus = (topicIds: string[], targetChecked: boolean) => {
+    userEditedSyllabusRef.current = true;
     const idSet = new Set(topicIds);
     setSyllabus((prev) =>
       prev.map((s) => {
@@ -1439,12 +1627,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   };
 
   const handleSelectAllFiltered = () => {
+    userEditedSyllabusRef.current = true;
     setSyllabus((prev) =>
       prev.map((s) => (visibleTopicIds.has(s.id) ? { ...s, checked: true } : s))
     );
   };
 
   const handleClearSelection = () => {
+    userEditedSyllabusRef.current = true;
     setSyllabus((prev) => prev.map((s) => ({ ...s, checked: false })));
   };
 
@@ -1462,7 +1652,9 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       loadedChallenge?.selected_syllabus ||
       [];
     const savedIds = new Set(currentSavedSyllabus.map((s: { id: string }) => s.id));
-    return syllabus.some((item) => item.checked && !savedIds.has(item.id));
+    const checkedItems = syllabus.filter((item) => item.checked);
+    if (checkedItems.length !== savedIds.size) return true;
+    return checkedItems.some((item) => !savedIds.has(item.id));
   }, [isChallengeSaved, challengePayload, activeChallenge, loadedChallenge, syllabus]);
 
   const syllabusMap = useMemo(() => {
@@ -2356,6 +2548,17 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                 >
                   <span className="material-symbols-outlined text-sm">balance</span>
                   <span>Balance Days</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleResetSelectedSyllabus}
+                  disabled={selectedSyllabusCount === 0 || isCreatingChallenge}
+                  className="px-3.5 py-1.5 rounded-xl bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-xs font-semibold border border-[#c0c9c0]/30 transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Reset all selected syllabus topics and empty the board"
+                >
+                  <span className="material-symbols-outlined text-sm">restart_alt</span>
+                  <span>Reset Selected Syllabus</span>
                 </button>
 
                 <div className="flex items-center gap-2">
