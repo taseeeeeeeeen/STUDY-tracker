@@ -127,7 +127,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   const navigate = useNavigate();
 
   // Strategy Planner Import Hydration
-  const strategyImportData = (location.state as any)?.strategyImport as
+  const [importPlan] = useState(() => (location.state as any)?.strategyImport as
     | {
         examName: string;
         prepStartDate: string;
@@ -136,19 +136,19 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         dayWiseAllocation: Record<string, unknown[]>;
         selectedTopicIds: string[];
       }
-    | undefined;
+    | undefined);
 
   const parsedImport = useMemo(() => {
-    if (!strategyImportData?.dayWiseAllocation) return null;
-    return parseCardsFromAllocation(strategyImportData.dayWiseAllocation);
-  }, [strategyImportData]);
+    if (!importPlan?.dayWiseAllocation) return null;
+    return parseCardsFromAllocation(importPlan.dayWiseAllocation);
+  }, [importPlan]);
 
   // 3-Step Wizard Flow State: 1 = Config, 2 = Topics, 3 = Schedule
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
 
-  // When strategyImportData is present, it takes over the wizard as a fresh challenge (do not auto-load saved active challenge)
+  // When importPlan is present, it takes over the wizard as a fresh challenge (do not auto-load saved active challenge)
   const initialChallenge =
-    strategyImportData
+    importPlan
       ? null
       : activeChallenge && activeChallenge.status !== 'archived'
       ? activeChallenge
@@ -162,33 +162,33 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // STEP 1: Duration selection (7, 14, 21, 30 or custom 5-60 days)
   const [duration, setDuration] = useState<SprintDuration | null>(
-    strategyImportData
-      ? (strategyImportData.durationDays as SprintDuration)
+    importPlan
+      ? (importPlan.durationDays as SprintDuration)
       : (initialChallenge?.duration as SprintDuration) || null
   );
   const [isCustomDuration, setIsCustomDuration] = useState<boolean>(
     Boolean(
-      strategyImportData ||
+      importPlan ||
         (initialChallenge?.duration &&
           ![7, 14, 21, 30].includes(Number(initialChallenge.duration)))
     )
   );
   const [customDurationInput, setCustomDurationInput] = useState<string>(
-    strategyImportData
-      ? String(strategyImportData.durationDays)
+    importPlan
+      ? String(importPlan.durationDays)
       : initialChallenge?.duration &&
         ![7, 14, 21, 30].includes(Number(initialChallenge.duration))
       ? String(initialChallenge.duration)
       : ''
   );
   const [challengeName, setChallengeName] = useState(
-    strategyImportData
-      ? `${strategyImportData.examName} Prep`
+    importPlan
+      ? `${importPlan.examName} Prep`
       : initialChallenge?.challenge_name || ''
   );
   const [startDate, setStartDate] = useState<string | null>(
-    strategyImportData
-      ? strategyImportData.prepStartDate
+    importPlan
+      ? importPlan.prepStartDate
       : initialChallenge?.start_date
       ? getLocalDateString(parseLocalDate(initialChallenge.start_date))
       : null
@@ -376,6 +376,17 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           };
         }) as SyllabusItem[];
 
+        if (importedTopicIdsRef.current) {
+          const importSet = importedTopicIdsRef.current;
+          setSyllabus(
+            dedupedItems.map((item) => ({
+              ...item,
+              checked: importSet.has(item.id),
+            }))
+          );
+          return;
+        }
+
         if (userEditedSyllabusRef.current) {
           // Keep user's local selection state intact; do not overwrite with remote challenge state
           setSyllabus((prev) => {
@@ -385,17 +396,6 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
               checked: prevMap.has(item.id) ? Boolean(prevMap.get(item.id)) : false,
             }));
           });
-          return;
-        }
-
-        if (importedTopicIdsRef.current) {
-          const importSet = importedTopicIdsRef.current;
-          setSyllabus(
-            dedupedItems.map((item) => ({
-              ...item,
-              checked: importSet.has(item.id),
-            }))
-          );
           return;
         }
 
@@ -434,41 +434,45 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Track order in which chapters were selected
   const chapterOrderRef = useRef<string[]>(initialRestored.order);
-  const userEditedSyllabusRef = useRef(Boolean(strategyImportData));
-  const hasPromptedResumeRef = useRef(Boolean(strategyImportData));
+  const userEditedSyllabusRef = useRef(Boolean(importPlan));
+  const hasPromptedResumeRef = useRef(Boolean(importPlan));
   const importedTopicIdsRef = useRef<Set<string> | null>(
-    strategyImportData?.selectedTopicIds ? new Set(strategyImportData.selectedTopicIds) : null
+    importPlan?.selectedTopicIds ? new Set(importPlan.selectedTopicIds) : null
   );
-  const isImportedBoardRef = useRef<boolean>(Boolean(strategyImportData));
+  const isImportedBoardRef = useRef<boolean>(Boolean(importPlan));
   const savedAllocationRef = useRef<Record<string, BoardCard[]> | null>(
     (initialChallenge?.day_wise_allocation as Record<string, BoardCard[]>) || null
   );
-  const [loadingChallenge, setLoadingChallenge] = useState(!initialChallenge && !strategyImportData);
+  const [loadingChallenge, setLoadingChallenge] = useState(!initialChallenge && !importPlan);
   const [loadedChallenge, setLoadedChallenge] = useState<FirestoreChallenge | null>(initialChallenge);
+
+  const hasHydratedImportRef = useRef(false);
 
   // Strategy Planner Import Hydration & Router State Cleanup
   useEffect(() => {
-    if (strategyImportData) {
-      // DATE SEMANTICS:
-      // durationDays = number of days from prep start through exam eve, i.e. (examStart - prepStart) in whole days.
-      // The wizard's Step 1 start date = prep start date; the challenge's last study day is the day before the exam.
-      // Note: to include exam day in the future, change formula to: (examStart - prepStart) + 1.
+    if (!importPlan || loadingSyllabus || hasHydratedImportRef.current) return;
 
-      // If syllabus was already loaded, mark selected topics checked:
-      if (syllabus.length > 0 && strategyImportData.selectedTopicIds?.length > 0) {
-        const idSet = new Set(strategyImportData.selectedTopicIds);
-        setSyllabus((prev) =>
-          prev.map((item) => ({
-            ...item,
-            checked: idSet.has(item.id),
-          }))
-        );
-      }
+    hasHydratedImportRef.current = true;
 
-      // Clear the router state after hydrating so a page refresh does not re-import
+    // Apply checkmarks to syllabus topics based on importPlan.selectedTopicIds
+    if (importPlan.selectedTopicIds?.length > 0) {
+      const idSet = new Set(importPlan.selectedTopicIds);
+      setSyllabus((prev) =>
+        prev.map((item) => ({
+          ...item,
+          checked: idSet.has(item.id),
+        }))
+      );
+    }
+
+    // Direct user straight to Step 3: Plan Your Schedule
+    setCurrentStep(3);
+
+    // Clear router state after hydration is complete so page refresh does not re-import
+    if ((location.state as any)?.strategyImport) {
       navigate(location.pathname, { replace: true, state: {} });
     }
-  }, []);
+  }, [loadingSyllabus, importPlan, location.pathname, navigate]);
 
   // Sync active challenge from context or Firestore: prompt user instead of silently auto-loading
   useEffect(() => {
@@ -576,6 +580,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Update DnD board cards whenever selected syllabus changes: chapter-level grouping with capacity-aware allocation
   useEffect(() => {
+    // Do not re-balance or wipe the imported board on entry (imported day assignments are intentional)
+    if (isImportedBoardRef.current) {
+      return;
+    }
+
     const selected = syllabus.filter((s) => s.checked);
     if (selected.length === 0) {
       setBoardCards([]);

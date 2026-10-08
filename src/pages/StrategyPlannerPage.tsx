@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { MasterSubject } from '../types/syllabus';
-import { SyllabusItem, BoardCard, BoardTopic } from '../types/wizard';
+import { SyllabusItem, BoardCard } from '../types/wizard';
 import { subscribeMasterSyllabus } from '../services/syllabusService';
 import { flattenAndDedupeMasterSyllabus } from '../utils/syllabusFlatten';
-import { balanceCardsAcrossDays } from '../utils/challengeLogic';
+import { buildStrategicRoutine } from '../utils/strategyPlannerLogic';
 import { getLocalDateString, parseLocalDate } from '../utils/dateUtils';
 
 export const StrategyPlannerPage: React.FC = () => {
@@ -59,7 +59,7 @@ export const StrategyPlannerPage: React.FC = () => {
     if (!prepStartDate) return 'Please select a prep start date.';
     if (!examStartDate) return 'Please select an exam date.';
     if (durationDays < 1) return 'Exam date must be after the prep start date (minimum 1 day prep).';
-    if (capacityMinutes < 30 || capacityMinutes > 600) return 'Daily capacity must be between 30 and 600 minutes.';
+    if (capacityMinutes < 30 || capacityMinutes > 720) return 'Daily capacity must be between 30 and 720 minutes (30 min to 12 hours).';
     return null;
   }, [examName, prepStartDate, examStartDate, durationDays, capacityMinutes]);
 
@@ -132,92 +132,21 @@ export const StrategyPlannerPage: React.FC = () => {
 
   // --- STEP 3 STATE: Generated Strategic Plan ---
   const [dayWisePlan, setDayWisePlan] = useState<Record<string, BoardCard[]>>({});
+  const [planWarnings, setPlanWarnings] = useState<string[]>([]);
   const [planGenerated, setPlanGenerated] = useState(false);
 
-  // Group selected topics by chapter & distribute using balanceCardsAcrossDays
+  // Group selected topics by chapter & distribute using buildStrategicRoutine
   const generatePlan = () => {
     if (selectedTopics.length === 0 || durationDays <= 0) return;
 
-    // 1. Group selected topics by chapter (matching ChallengeWizard structure)
-    const groupsMap = new Map<
-      string,
-      {
-        chapterId: string;
-        chapterName: string;
-        subject: string;
-        topics: SyllabusItem[];
-      }
-    >();
-
-    selectedTopics.forEach((item) => {
-      const chId = item.chapterId || item.chapterName || item.subject;
-      if (!groupsMap.has(chId)) {
-        groupsMap.set(chId, {
-          chapterId: chId,
-          chapterName: item.chapterName || item.title,
-          subject: item.subject,
-          topics: [],
-        });
-      }
-      groupsMap.get(chId)!.topics.push(item);
-    });
-
-    // 2. Prepare raw chapter-level BoardCards
-    const rawCards: BoardCard[] = Array.from(groupsMap.values()).map((group) => {
-      const totalDur = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
-      const boardTopics: BoardTopic[] = group.topics.map((t) => ({
-        id: t.id,
-        title: t.title,
-        subconcept: t.subconcept,
-        durationMinutes: t.durationMinutes || 45,
-        tag: t.tag || 'Core Concept',
-        subject: t.subject,
-        chapterId: group.chapterId,
-        chapterName: group.chapterName,
-        dayNumber: 1,
-      }));
-
-      return {
-        id: `chapter-${group.chapterId}`,
-        chapterId: group.chapterId,
-        chapterName: group.chapterName,
-        subject: group.subject,
-        title: group.chapterName,
-        durationMinutes: totalDur,
-        tag: `${group.topics.length} ${group.topics.length === 1 ? 'topic' : 'topics'}`,
-        dayNumber: 1,
-        topics: boardTopics,
-      };
-    });
-
-    // 3. Define day capacities for the prep window
-    const dayCapacities: Record<number, number> = {};
-    for (let d = 1; d <= durationDays; d++) {
-      dayCapacities[d] = capacityMinutes;
-    }
-
-    // 4. Run capacity-aware balancing
-    const balancedCards = balanceCardsAcrossDays({
-      cards: rawCards,
+    const { allocation, warnings } = buildStrategicRoutine({
+      topics: selectedTopics,
       numDays: durationDays,
-      firstNonPastDay: 1,
-      dayCapacities,
+      dailyCapacityMinutes: capacityMinutes,
     });
-
-    // 5. Structure into standard day_wise_allocation Record<"Day N", BoardCard[]>
-    const allocation: Record<string, BoardCard[]> = {};
-    for (let d = 1; d <= durationDays; d++) {
-      const dayKey = `Day ${d}`;
-      const dayCards = balancedCards
-        .filter((c) => c.dayNumber === d)
-        .map((c) => ({
-          ...c,
-          topics: (c.topics || []).map((t) => ({ ...t, dayNumber: d })),
-        }));
-      allocation[dayKey] = dayCards;
-    }
 
     setDayWisePlan(allocation);
+    setPlanWarnings(warnings);
     setPlanGenerated(true);
     setCurrentStep(3);
   };
@@ -381,7 +310,7 @@ export const StrategyPlannerPage: React.FC = () => {
                 <input
                   type="range"
                   min="60"
-                  max="360"
+                  max="720"
                   step="15"
                   value={capacityMinutes}
                   onChange={(e) => setCapacityMinutes(Number(e.target.value))}
@@ -390,7 +319,7 @@ export const StrategyPlannerPage: React.FC = () => {
                 <div className="flex justify-between text-[10px] text-[#707971] font-mono">
                   <span>1h (Light)</span>
                   <span>2.5h (Recommended Wizard default: 150m)</span>
-                  <span>6h (Intensive)</span>
+                  <span>12h (Intensive)</span>
                 </div>
               </div>
 
@@ -866,6 +795,23 @@ export const StrategyPlannerPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Amber warnings notice if any */}
+          {planWarnings.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5 flex gap-3 text-amber-900 animate-in slide-in-from-top-2 duration-150 shadow-xs">
+              <span className="material-symbols-outlined text-amber-600 shrink-0 mt-0.5">warning</span>
+              <div className="space-y-1.5 min-w-0 flex-1">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-amber-800">
+                  Plan Warnings & Constraints Realized
+                </h4>
+                <ul className="list-disc pl-4 space-y-1 text-xs text-amber-900/80">
+                  {planWarnings.map((warning, index) => (
+                    <li key={index} className="leading-relaxed">{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+
           {/* Quick Re-balance Control Strip */}
           <div className="bg-white p-4 rounded-2xl border border-[#c0c9c0]/30 shadow-xs flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -874,7 +820,7 @@ export const StrategyPlannerPage: React.FC = () => {
               <input
                 type="range"
                 min="60"
-                max="360"
+                max="720"
                 step="15"
                 value={capacityMinutes}
                 onChange={(e) => setCapacityMinutes(Number(e.target.value))}

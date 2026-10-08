@@ -3,6 +3,8 @@ import {
   User as FirebaseUser,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
@@ -119,8 +121,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Listen to auth state changes
+  // Listen to auth state changes and process redirect results
   useEffect(() => {
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (result?.user) {
+          const appUserData = await syncUserWithFirestore(result.user);
+          setFirebaseUser(result.user);
+          setUser(appUserData);
+        }
+      })
+      .catch((err: any) => {
+        console.error('Google Redirect Sign-In Error:', err);
+        if (
+          err?.code !== 'auth/popup-blocked' &&
+          err?.code !== 'auth/cancelled-popup-request' &&
+          err?.code !== 'auth/popup-closed-by-user'
+        ) {
+          setAuthError(err instanceof Error ? err.message : 'Failed to complete Google Sign-In.');
+        }
+      });
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       setLoading(true);
       if (fbUser) {
@@ -150,7 +171,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
-  // Google Sign-In with popup
+  // Google Sign-In with popup & redirect fallback
   const signInWithGoogle = async () => {
     setAuthError(null);
     setLoading(true);
@@ -159,12 +180,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const appUserData = await syncUserWithFirestore(result.user);
       setFirebaseUser(result.user);
       setUser(appUserData);
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error('Google Sign-In Error:', err);
-      const message =
-        err instanceof Error ? err.message : 'Failed to complete Google Sign-In.';
-      setAuthError(message);
-      throw err;
+      // Fallback to Redirect if popup-blocked occurs
+      if (err?.code === 'auth/popup-blocked' || err?.message?.includes('popup-blocked')) {
+        console.log('Popup was blocked. Attempting Redirect Sign-In fallback...');
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr: any) {
+          console.error('Redirect Fallback Error:', redirectErr);
+          setAuthError('Sign-in popup was blocked, and redirect fallback failed. Please enable popups in your browser.');
+        }
+      } else if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        console.log('User closed the Google Sign-In popup before completing login.');
+        setAuthError('Sign-in cancelled. Please try again when ready.');
+      } else {
+        const message =
+          err instanceof Error ? err.message : 'Failed to complete Google Sign-In.';
+        setAuthError(message);
+        throw err;
+      }
     } finally {
       setLoading(false);
     }
