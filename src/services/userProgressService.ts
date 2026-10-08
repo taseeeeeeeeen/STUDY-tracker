@@ -1,5 +1,6 @@
 import {
   doc,
+  getDocFromCache,
   setDoc,
   onSnapshot,
   runTransaction,
@@ -7,9 +8,32 @@ import {
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 
+function isConnectionError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    code === 'unavailable' ||
+    msg.includes('connection failed') ||
+    msg.includes('offline') ||
+    msg.includes('network') ||
+    msg.includes('failed to get document') ||
+    msg.includes('deadline') ||
+    msg.includes('backend')
+  );
+}
+
 export interface UserTopicProgress {
   theory: boolean;
   practice: boolean;
+}
+
+export interface QuickStudyLogItem {
+  id: string;
+  subject: string;
+  minutes: number;
+  notes?: string;
+  timestamp: number;
+  createdAt: string;
 }
 
 export interface UserProgressDoc {
@@ -21,6 +45,7 @@ export interface UserProgressDoc {
   savedSyllabusIds?: string[];
   hiddenSubjectIds?: string[];
   completionLog?: Record<string, { theory: number | null; practice: number | null }>;
+  quickLogs?: QuickStudyLogItem[];
 }
 
 const COLLECTION_NAME = 'user_progress';
@@ -134,6 +159,9 @@ export function subscribeUserProgress(
  * Explicit set with completion log maintenance:
  * - topicProgress[topicId][type] = value
  * - completionLog[topicId][type] = value ? Date.now() : null
+ *
+ * Uses setDoc with merge: true so that writes are queued into Firestore's offline cache
+ * and synced automatically upon reconnect.
  */
 export async function setUserTopicProgress(
   uid: string,
@@ -142,197 +170,109 @@ export async function setUserTopicProgress(
   value: boolean
 ): Promise<void> {
   const docRef = doc(db, COLLECTION_NAME, uid);
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+
   try {
-    await runTransaction(db, async (transaction) => {
-      const snap = await transaction.get(docRef);
-      const nowIso = new Date().toISOString();
-      const nowMs = Date.now();
-
-      if (!snap.exists()) {
-        const initialDoc: UserProgressDoc = {
-          uid,
-          topicProgress: {
-            [topicId]: {
-              theory: type === 'theory' ? value : false,
-              practice: type === 'practice' ? value : false,
-            },
+    await setDoc(
+      docRef,
+      {
+        uid,
+        topicProgress: {
+          [topicId]: {
+            [type]: value,
           },
-          completionLog: {
-            [topicId]: {
-              theory: type === 'theory' && value ? nowMs : null,
-              practice: type === 'practice' && value ? nowMs : null,
-            },
+        },
+        completionLog: {
+          [topicId]: {
+            [type]: value ? nowMs : null,
           },
-          updatedAt: nowIso,
-        };
-        transaction.set(docRef, initialDoc);
-      } else {
-        const data = snap.data() as UserProgressDoc;
-        const currentTopicProg = data.topicProgress?.[topicId] || {
-          theory: false,
-          practice: false,
-        };
-        const currentLog = data.completionLog?.[topicId] || {
-          theory: null,
-          practice: null,
-        };
-
-        const updatedTopicProg = {
-          ...currentTopicProg,
-          [type]: value,
-        };
-
-        const updatedLog = {
-          ...currentLog,
-          [type]: value ? nowMs : null,
-        };
-
-        transaction.update(docRef, {
-          [`topicProgress.${topicId}`]: updatedTopicProg,
-          [`completionLog.${topicId}`]: updatedLog,
-          updatedAt: nowIso,
-        });
-      }
-    });
+        },
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
   } catch (err) {
+    if (isConnectionError(err)) {
+      console.warn('setUserTopicProgress write queued offline:', err);
+      return;
+    }
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
   }
 }
 
 /**
- * Atomic toggle inside a single Firestore transaction:
- * Reads latest document state, flips the target flag (!current), and writes the flag and completionLog.
+ * Single-flag toggle with explicit value support or cache-derived flip:
+ * If explicitValue is provided, uses that explicit value idempotently via setUserTopicProgress.
+ * Otherwise, derives nextValue from local cached doc state (or fallback default),
+ * and issues an explicit set-style write (setDoc merge) so offline writes queue properly.
  */
 export async function toggleUserTopicProgress(
   uid: string,
   topicId: string,
-  type: 'theory' | 'practice'
+  type: 'theory' | 'practice',
+  explicitValue?: boolean
 ): Promise<void> {
-  const docRef = doc(db, COLLECTION_NAME, uid);
-  try {
-    await runTransaction(db, async (transaction) => {
-      const snap = await transaction.get(docRef);
-      const nowIso = new Date().toISOString();
-      const nowMs = Date.now();
-
-      if (!snap.exists()) {
-        const nextValue = true;
-        const initialDoc: UserProgressDoc = {
-          uid,
-          topicProgress: {
-            [topicId]: {
-              theory: type === 'theory' ? nextValue : false,
-              practice: type === 'practice' ? nextValue : false,
-            },
-          },
-          completionLog: {
-            [topicId]: {
-              theory: type === 'theory' ? nowMs : null,
-              practice: type === 'practice' ? nowMs : null,
-            },
-          },
-          updatedAt: nowIso,
-        };
-        transaction.set(docRef, initialDoc);
-      } else {
-        const data = snap.data() as UserProgressDoc;
-        const currentTopicProg = data.topicProgress?.[topicId] || {
-          theory: false,
-          practice: false,
-        };
-        const currentLog = data.completionLog?.[topicId] || {
-          theory: null,
-          practice: null,
-        };
-
-        const currentVal = Boolean(currentTopicProg[type]);
-        const nextValue = !currentVal;
-
-        const updatedTopicProg = {
-          ...currentTopicProg,
-          [type]: nextValue,
-        };
-
-        const updatedLog = {
-          ...currentLog,
-          [type]: nextValue ? nowMs : null,
-        };
-
-        transaction.update(docRef, {
-          [`topicProgress.${topicId}`]: updatedTopicProg,
-          [`completionLog.${topicId}`]: updatedLog,
-          updatedAt: nowIso,
-        });
-      }
-    });
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
+  if (explicitValue !== undefined) {
+    return setUserTopicProgress(uid, topicId, type, explicitValue);
   }
+
+  const docRef = doc(db, COLLECTION_NAME, uid);
+  const cachedSnap = await getDocFromCache(docRef).catch(() => null);
+  const cachedData = cachedSnap && cachedSnap.exists() ? (cachedSnap.data() as UserProgressDoc) : null;
+  const currentVal = Boolean(cachedData?.topicProgress?.[topicId]?.[type]);
+  const nextValue = !currentVal;
+
+  return setUserTopicProgress(uid, topicId, type, nextValue);
 }
 
 /**
  * Batch variant:
- * For each topicId in updates: set topicProgress fields AND mirror each flag PRESENT
- * into completionLog (true -> Date.now(), false -> null).
+ * For each topicId in updates: sets topicProgress fields AND mirrors each flag PRESENT
+ * into completionLog (true -> Date.now(), false -> null) via setDoc merge so offline writes queue properly.
  */
 export async function setUserTopicProgressBatch(
   uid: string,
   updates: Record<string, UserTopicProgress>
 ): Promise<void> {
   const docRef = doc(db, COLLECTION_NAME, uid);
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+
+  const topicProgressPayload: Record<string, any> = {};
+  const completionLogPayload: Record<string, any> = {};
+
+  for (const [topicId, prog] of Object.entries(updates)) {
+    topicProgressPayload[topicId] = {};
+    completionLogPayload[topicId] = {};
+
+    if (prog.theory !== undefined) {
+      topicProgressPayload[topicId].theory = prog.theory;
+      completionLogPayload[topicId].theory = prog.theory ? nowMs : null;
+    }
+
+    if (prog.practice !== undefined) {
+      topicProgressPayload[topicId].practice = prog.practice;
+      completionLogPayload[topicId].practice = prog.practice ? nowMs : null;
+    }
+  }
+
   try {
-    await runTransaction(db, async (transaction) => {
-      const snap = await transaction.get(docRef);
-      const nowIso = new Date().toISOString();
-      const nowMs = Date.now();
-
-      if (!snap.exists()) {
-        const initialTopicProgress: Record<string, UserTopicProgress> = {};
-        const initialCompletionLog: Record<string, { theory: number | null; practice: number | null }> = {};
-
-        for (const [topicId, prog] of Object.entries(updates)) {
-          initialTopicProgress[topicId] = { ...prog };
-          initialCompletionLog[topicId] = {
-            theory: prog.theory ? nowMs : null,
-            practice: prog.practice ? nowMs : null,
-          };
-        }
-
-        const initialDoc: UserProgressDoc = {
-          uid,
-          topicProgress: initialTopicProgress,
-          completionLog: initialCompletionLog,
-          updatedAt: nowIso,
-        };
-        transaction.set(docRef, initialDoc);
-      } else {
-        const data = snap.data() as UserProgressDoc;
-        const currentProgress = { ...(data.topicProgress || {}) };
-        const currentLog = { ...(data.completionLog || {}) };
-
-        for (const [topicId, prog] of Object.entries(updates)) {
-          const existingProg = currentProgress[topicId] || { theory: false, practice: false };
-          const existingLog = currentLog[topicId] || { theory: null, practice: null };
-
-          currentProgress[topicId] = {
-            ...existingProg,
-            ...prog,
-          };
-
-          currentLog[topicId] = {
-            theory: prog.theory !== undefined ? (prog.theory ? (existingLog.theory && existingProg.theory ? existingLog.theory : nowMs) : null) : existingLog.theory,
-            practice: prog.practice !== undefined ? (prog.practice ? (existingLog.practice && existingProg.practice ? existingLog.practice : nowMs) : null) : existingLog.practice,
-          };
-        }
-
-        transaction.update(docRef, {
-          topicProgress: currentProgress,
-          completionLog: currentLog,
-          updatedAt: nowIso,
-        });
-      }
-    });
+    await setDoc(
+      docRef,
+      {
+        uid,
+        topicProgress: topicProgressPayload,
+        completionLog: completionLogPayload,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
   } catch (err) {
+    if (isConnectionError(err)) {
+      console.warn('setUserTopicProgressBatch write queued offline:', err);
+      return;
+    }
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
   }
 }
@@ -402,6 +342,47 @@ export async function resetTopicsProgress(
 }
 
 /**
+ * PER-USER ISOLATION GUARANTEE:
+ * This function writes ONLY to the specific document `user_progress/${uid}`,
+ * where `uid` MUST match `auth.currentUser.uid`. It never queries the collection,
+ * never performs collection scans, and never touches any other user's document.
+ * In a single atomic operation, it clears `topicProgress` and `completionLog` (setting both to `{}`),
+ * while strictly PRESERVING all other fields (uid, peerCode, hiddenSubjectIds, savedSyllabusIds, activeChallengeId, quickLogs).
+ */
+export async function resetAllHscProgress(uid: string): Promise<void> {
+  if (!uid || (auth.currentUser && auth.currentUser.uid !== uid)) {
+    throw new Error('Unauthorized or invalid UID for HSC progress reset.');
+  }
+
+  const docRef = doc(db, COLLECTION_NAME, uid);
+  try {
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(docRef);
+      const nowIso = new Date().toISOString();
+      if (!snap.exists()) {
+        const initialDoc: UserProgressDoc = {
+          uid,
+          topicProgress: {},
+          completionLog: {},
+          updatedAt: nowIso,
+        };
+        transaction.set(docRef, initialDoc);
+        return;
+      }
+
+      transaction.update(docRef, {
+        topicProgress: {},
+        completionLog: {},
+        updatedAt: nowIso,
+      });
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
+    throw err;
+  }
+}
+
+/**
  * Toggles hiding a master subject for the current user in user_progress
  */
 export async function toggleHideSubject(uid: string, subjectId: string): Promise<void> {
@@ -452,6 +433,51 @@ export async function setHiddenSubjectIds(uid: string, hiddenIds: string[]): Pro
       },
       { merge: true }
     );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
+  }
+}
+
+/**
+ * Appends a quick study session log entry to the user's progress document in user_progress
+ */
+export async function addQuickStudyLog(
+  uid: string,
+  entry: { subject: string; minutes: number; notes?: string }
+): Promise<QuickStudyLogItem> {
+  const docRef = doc(db, COLLECTION_NAME, uid);
+  const now = new Date();
+  const logItem: QuickStudyLogItem = {
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    subject: entry.subject,
+    minutes: Math.max(1, entry.minutes),
+    notes: entry.notes?.trim() || '',
+    timestamp: now.getTime(),
+    createdAt: now.toISOString(),
+  };
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(docRef);
+      if (!snap.exists()) {
+        const initialDoc: UserProgressDoc = {
+          uid,
+          topicProgress: {},
+          quickLogs: [logItem],
+          updatedAt: now.toISOString(),
+        };
+        transaction.set(docRef, initialDoc);
+      } else {
+        const data = snap.data() as UserProgressDoc;
+        const currentLogs = Array.isArray(data.quickLogs) ? data.quickLogs : [];
+        const updatedLogs = [logItem, ...currentLogs].slice(0, 100);
+        transaction.update(docRef, {
+          quickLogs: updatedLogs,
+          updatedAt: now.toISOString(),
+        });
+      }
+    });
+    return logItem;
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${uid}`);
   }

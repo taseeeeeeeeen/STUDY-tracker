@@ -1,19 +1,34 @@
 import React, { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
 import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType, ADMIN_EMAILS } from '../firebase';
+import { db, ADMIN_EMAILS } from '../firebase';
 import { AppUser, UserRole } from '../types/auth';
 import { useAuth } from '../context/AuthContext';
 import { SyllabusManager } from '../components/admin/SyllabusManager';
+import { AdminStudentProgress } from '../components/admin/AdminStudentProgress';
 
 export const AdminDashboardPage: React.FC = () => {
-  const { user: currentUser } = useAuth();
-  const [activeSection, setActiveSection] = useState<'users' | 'syllabus'>('users');
+  const { user: currentUser, isAdmin, loading } = useAuth();
+  const [activeSection, setActiveSection] = useState<'users' | 'progress' | 'syllabus'>('users');
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'user'>('all');
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ text: string; isError?: boolean } | null>(null);
   const [updatingUid, setUpdatingUid] = useState<string | null>(null);
+
+  // Defense in depth guard: direct navigation or stale state never renders admin console
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center p-6 text-xs text-[#707971] font-mono">
+        Verifying authorization...
+      </div>
+    );
+  }
+
+  if (!currentUser || !isAdmin) {
+    return <Navigate to="/" replace />;
+  }
 
   // Real-time listener for Firestore `users` collection
   useEffect(() => {
@@ -35,7 +50,12 @@ export const AdminDashboardPage: React.FC = () => {
       },
       (error) => {
         setLoadingUsers(false);
-        handleFirestoreError(error, OperationType.LIST, 'users');
+        console.error('Failed to load users listener:', error);
+        const errMsg = error instanceof Error ? error.message : 'Failed to load user accounts.';
+        setActionMessage({
+          text: `Error loading users: ${errMsg}`,
+          isError: true,
+        });
       }
     );
 
@@ -49,10 +69,18 @@ export const AdminDashboardPage: React.FC = () => {
     try {
       const userRef = doc(db, 'users', targetUser.uid);
       await updateDoc(userRef, { role: newRole });
-      setActionMessage(`Role for ${targetUser.name || targetUser.email} changed to "${newRole}".`);
+      setActionMessage({
+        text: `Role for ${targetUser.name || targetUser.email} changed to "${newRole}".`,
+      });
       setTimeout(() => setActionMessage(null), 4000);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${targetUser.uid}`);
+      console.error('Failed to update user role:', error);
+      const errMsg = error instanceof Error ? error.message : 'Failed to update user role.';
+      setActionMessage({
+        text: `Failed to update role for ${targetUser.name || targetUser.email}: ${errMsg}`,
+        isError: true,
+      });
+      setTimeout(() => setActionMessage(null), 5000);
     } finally {
       setUpdatingUid(null);
     }
@@ -140,6 +168,27 @@ export const AdminDashboardPage: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveSection('progress')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            activeSection === 'progress'
+              ? 'bg-[#003820] text-white shadow-xs'
+              : 'text-[#404942] hover:bg-[#eff4ff] hover:text-[#003820]'
+          }`}
+        >
+          <span className="material-symbols-outlined text-base">insights</span>
+          <span>Student Progress</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
+              activeSection === 'progress'
+                ? 'bg-[#6ffbbe]/25 text-[#6ffbbe]'
+                : 'bg-[#eff4ff] text-[#003820]'
+            }`}
+          >
+            Metrics
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveSection('syllabus')}
           className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
             activeSection === 'syllabus'
@@ -163,10 +212,22 @@ export const AdminDashboardPage: React.FC = () => {
 
       {/* Action Notification */}
       {actionMessage && (
-        <div className="p-4 rounded-2xl bg-[#003820] text-white text-xs font-semibold flex items-center justify-between shadow-lg border border-[#6ffbbe]/40 animate-in fade-in">
+        <div
+          className={`p-4 rounded-2xl text-white text-xs font-semibold flex items-center justify-between shadow-lg border animate-in fade-in ${
+            actionMessage.isError
+              ? 'bg-red-800 border-red-400'
+              : 'bg-[#003820] border-[#6ffbbe]/40'
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-base text-[#6ffbbe]">check_circle</span>
-            <span>{actionMessage}</span>
+            <span
+              className={`material-symbols-outlined text-base ${
+                actionMessage.isError ? 'text-red-300' : 'text-[#6ffbbe]'
+              }`}
+            >
+              {actionMessage.isError ? 'error' : 'check_circle'}
+            </span>
+            <span>{actionMessage.text}</span>
           </div>
           <button
             onClick={() => setActionMessage(null)}
@@ -458,7 +519,10 @@ export const AdminDashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* SECTION 2: SYLLABUS MANAGEMENT */}
+      {/* SECTION 2: STUDENT PROGRESS (VIEW ONLY) */}
+      {activeSection === 'progress' && <AdminStudentProgress users={users} />}
+
+      {/* SECTION 3: SYLLABUS MANAGEMENT */}
       {activeSection === 'syllabus' && <SyllabusManager />}
     </div>
   );

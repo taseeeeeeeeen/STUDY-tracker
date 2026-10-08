@@ -18,7 +18,8 @@ export const SyllabusManager: React.FC = () => {
   const [importing, setImporting] = useState(false);
   const [expandedSubjectId, setExpandedSubjectId] = useState<string | null>(null);
   const [expandedChapterId, setExpandedChapterId] = useState<string | null>(null);
-  const [notification, setNotification] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [notification, setNotification] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // Modals state
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -51,8 +52,8 @@ export const SyllabusManager: React.FC = () => {
     tag: 'Core Concept',
   });
 
-  const notify = (msg: string) => {
-    setNotification(msg);
+  const notify = (msg: string, isError = false) => {
+    setNotification({ text: msg, isError });
     setTimeout(() => setNotification(null), 4000);
   };
 
@@ -172,38 +173,57 @@ export const SyllabusManager: React.FC = () => {
 
   const handleSaveSubject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!subjectForm.name.trim() || !subjectForm.code.trim()) return;
+    if (!subjectForm.name.trim() || !subjectForm.code.trim() || saving) return;
 
-    if (editingSubject) {
-      const updated: MasterSubject = {
-        ...editingSubject,
-        name: subjectForm.name.trim(),
-        code: subjectForm.code.trim(),
-        color: subjectForm.color,
-      };
-      await saveSubject(updated, user?.uid);
-      notify(`Updated subject "${updated.name}"`);
-    } else {
-      const newSub: MasterSubject = {
-        id: subjectForm.id.trim() || `sub-${Date.now()}`,
-        name: subjectForm.name.trim(),
-        code: subjectForm.code.trim(),
-        color: subjectForm.color,
-        order: subjects.length + 1,
-        chapters: [],
-      };
-      await saveSubject(newSub, user?.uid);
-      notify(`Created subject "${newSub.name}"`);
-      setExpandedSubjectId(newSub.id);
+    setSaving(true);
+    try {
+      if (editingSubject) {
+        const updated: MasterSubject = {
+          ...editingSubject,
+          name: subjectForm.name.trim(),
+          code: subjectForm.code.trim(),
+          color: subjectForm.color,
+        };
+        await saveSubject(updated, user?.uid);
+        notify(`Updated subject "${updated.name}"`);
+      } else {
+        const newSub: MasterSubject = {
+          id: subjectForm.id.trim() || `sub-${Date.now()}`,
+          name: subjectForm.name.trim(),
+          code: subjectForm.code.trim(),
+          color: subjectForm.color,
+          order: subjects.length + 1,
+          chapters: [],
+        };
+        await saveSubject(newSub, user?.uid);
+        notify(`Created subject "${newSub.name}"`);
+        setExpandedSubjectId(newSub.id);
+      }
+      setSubjectModalOpen(false);
+    } catch (err) {
+      console.error('Failed to save subject:', err);
+      notify(
+        `Failed to save subject: ${err instanceof Error ? err.message : 'Write failed or permission denied'}`,
+        true
+      );
+    } finally {
+      setSaving(false);
     }
-    setSubjectModalOpen(false);
   };
 
   const handleDeleteSubject = async (sub: MasterSubject, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm(`Are you sure you want to delete "${sub.name}" and all its chapters?`)) {
-      await deleteSubject(sub.id);
-      notify(`Deleted subject "${sub.name}"`);
+      try {
+        await deleteSubject(sub.id);
+        notify(`Deleted subject "${sub.name}"`);
+      } catch (err) {
+        console.error('Failed to delete subject:', err);
+        notify(
+          `Failed to delete subject: ${err instanceof Error ? err.message : 'Write failed or permission denied'}`,
+          true
+        );
+      }
     }
   };
 
@@ -230,7 +250,7 @@ export const SyllabusManager: React.FC = () => {
 
   const handleSaveChapter = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeSubjectForChapter || !chapterForm.name.trim()) return;
+    if (!activeSubjectForChapter || !chapterForm.name.trim() || saving) return;
 
     const chapters = [...(activeSubjectForChapter.chapters || [])];
 
@@ -257,9 +277,20 @@ export const SyllabusManager: React.FC = () => {
       chapters: chapters.sort((a, b) => a.order - b.order),
     };
 
-    await saveSubject(updatedSub, user?.uid);
-    notify(`Saved chapter "${chapterForm.name}"`);
-    setChapterModalOpen(false);
+    setSaving(true);
+    try {
+      await saveSubject(updatedSub, user?.uid);
+      notify(`Saved chapter "${chapterForm.name}"`);
+      setChapterModalOpen(false);
+    } catch (err) {
+      console.error('Failed to save chapter:', err);
+      notify(
+        `Failed to save chapter: ${err instanceof Error ? err.message : 'Write failed or permission denied'}`,
+        true
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeleteChapter = async (
@@ -270,8 +301,16 @@ export const SyllabusManager: React.FC = () => {
     e.stopPropagation();
     if (confirm('Delete this chapter and all of its topics?')) {
       const updatedChapters = sub.chapters.filter((c) => c.id !== chId);
-      await saveSubject({ ...sub, chapters: updatedChapters }, user?.uid);
-      notify('Chapter deleted.');
+      try {
+        await saveSubject({ ...sub, chapters: updatedChapters }, user?.uid);
+        notify('Chapter deleted.');
+      } catch (err) {
+        console.error('Failed to delete chapter:', err);
+        notify(
+          `Failed to delete chapter: ${err instanceof Error ? err.message : 'Write failed or permission denied'}`,
+          true
+        );
+      }
     }
   };
 
@@ -315,7 +354,7 @@ export const SyllabusManager: React.FC = () => {
 
   const handleSaveTopic = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeSubjectForTopic || !activeChapterForTopic || !topicForm.title.trim()) return;
+    if (!activeSubjectForTopic || !activeChapterForTopic || !topicForm.title.trim() || saving) return;
 
     const chapters = [...activeSubjectForTopic.chapters];
     const chIdx = chapters.findIndex((c) => c.id === activeChapterForTopic.id);
@@ -349,9 +388,20 @@ export const SyllabusManager: React.FC = () => {
     chapters[chIdx] = { ...chapters[chIdx], topics };
     const updatedSub = { ...activeSubjectForTopic, chapters };
 
-    await saveSubject(updatedSub, user?.uid);
-    notify(`Saved topic "${topicForm.title}"`);
-    setTopicModalOpen(false);
+    setSaving(true);
+    try {
+      await saveSubject(updatedSub, user?.uid);
+      notify(`Saved topic "${topicForm.title}"`);
+      setTopicModalOpen(false);
+    } catch (err) {
+      console.error('Failed to save topic:', err);
+      notify(
+        `Failed to save topic: ${err instanceof Error ? err.message : 'Write failed or permission denied'}`,
+        true
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeleteTopic = async (
@@ -371,8 +421,16 @@ export const SyllabusManager: React.FC = () => {
         }
         return ch;
       });
-      await saveSubject({ ...sub, chapters }, user?.uid);
-      notify('Topic removed from master syllabus.');
+      try {
+        await saveSubject({ ...sub, chapters }, user?.uid);
+        notify('Topic removed from master syllabus.');
+      } catch (err) {
+        console.error('Failed to delete topic:', err);
+        notify(
+          `Failed to delete topic: ${err instanceof Error ? err.message : 'Write failed or permission denied'}`,
+          true
+        );
+      }
     }
   };
 
@@ -428,10 +486,22 @@ export const SyllabusManager: React.FC = () => {
       </div>
 
       {notification && (
-        <div className="mx-6 p-3 rounded-xl bg-[#003820] text-white text-xs font-semibold flex items-center justify-between shadow-md border border-[#6ffbbe]/40">
+        <div
+          className={`mx-6 p-3 rounded-xl text-white text-xs font-semibold flex items-center justify-between shadow-md border ${
+            notification.isError
+              ? 'bg-red-800 border-red-400'
+              : 'bg-[#003820] border-[#6ffbbe]/40'
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-sm text-[#6ffbbe]">check_circle</span>
-            <span>{notification}</span>
+            <span
+              className={`material-symbols-outlined text-sm ${
+                notification.isError ? 'text-red-300' : 'text-[#6ffbbe]'
+              }`}
+            >
+              {notification.isError ? 'error' : 'check_circle'}
+            </span>
+            <span>{notification.text}</span>
           </div>
           <button onClick={() => setNotification(null)} className="text-white/70 hover:text-white">
             <span className="material-symbols-outlined text-xs">close</span>
@@ -762,9 +832,10 @@ export const SyllabusManager: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] cursor-pointer"
+                disabled={saving}
+                className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] disabled:opacity-50 cursor-pointer"
               >
-                {editingSubject ? 'Save Changes' : 'Create Subject'}
+                {saving ? 'Saving...' : editingSubject ? 'Save Changes' : 'Create Subject'}
               </button>
             </div>
           </form>
@@ -819,9 +890,10 @@ export const SyllabusManager: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] cursor-pointer"
+                disabled={saving}
+                className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] disabled:opacity-50 cursor-pointer"
               >
-                {editingChapter ? 'Save Chapter' : 'Add Chapter'}
+                {saving ? 'Saving...' : editingChapter ? 'Save Chapter' : 'Add Chapter'}
               </button>
             </div>
           </form>
@@ -911,9 +983,10 @@ export const SyllabusManager: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] cursor-pointer"
+                disabled={saving}
+                className="px-4 py-2 rounded-xl bg-[#003820] text-white text-xs font-bold hover:bg-[#004e2d] disabled:opacity-50 cursor-pointer"
               >
-                {editingTopic ? 'Save Topic' : 'Add Topic'}
+                {saving ? 'Saving...' : editingTopic ? 'Save Topic' : 'Add Topic'}
               </button>
             </div>
           </form>

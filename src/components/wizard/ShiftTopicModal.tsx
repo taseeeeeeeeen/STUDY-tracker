@@ -8,7 +8,7 @@ interface ShiftTopicModalProps {
   currentDay: number;
   columns: DayColumnData[];
   cards: BoardCard[];
-  onConfirmShift: (cardId: string, targetDay: number) => void;
+  onConfirmShift: (cardId: string, targetDay: number, selectedTopicIds?: string[]) => void;
 }
 
 export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
@@ -32,12 +32,51 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
   const [autoBalance, setAutoBalance] = useState(true);
   const [overrideCapacity, setOverrideCapacity] = useState(false);
 
+  // Per-topic selection state for multi-topic cards
+  const cardTopics = card?.topics || [];
+  const hasMultipleTopics = Boolean(card && cardTopics.length > 1);
+  const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
+
+  // Initialize selectedTopicIds to all checked whenever the modal opens or card changes
+  useEffect(() => {
+    if (card?.topics && card.topics.length > 0) {
+      setSelectedTopicIds(card.topics.map((t) => t.id));
+    } else {
+      setSelectedTopicIds([]);
+    }
+  }, [card, isOpen]);
+
+  const isAllSelected = hasMultipleTopics && selectedTopicIds.length === cardTopics.length;
+  const isNoneSelected = hasMultipleTopics && selectedTopicIds.length === 0;
+
+  const handleToggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedTopicIds([]);
+    } else {
+      setSelectedTopicIds(cardTopics.map((t) => t.id));
+    }
+  };
+
+  const handleToggleTopic = (topicId: string) => {
+    setSelectedTopicIds((prev) =>
+      prev.includes(topicId) ? prev.filter((id) => id !== topicId) : [...prev, topicId]
+    );
+  };
+
+  // Calculate moving minutes based on selected topics
+  const checkedTopics = hasMultipleTopics
+    ? cardTopics.filter((t) => selectedTopicIds.includes(t.id))
+    : cardTopics;
+  const movingMinutes = hasMultipleTopics
+    ? checkedTopics.reduce((sum, t) => sum + (t.durationMinutes || 0), 0)
+    : (card?.durationMinutes || 0);
+
   // Calculate target day capacity and projected workload
   const targetCards = cards.filter((c) => c.dayNumber === selectedDay && c.id !== card?.id);
   const targetCurrentMins = targetCards.reduce((sum, c) => sum + c.durationMinutes, 0);
   const targetCol = columns.find((c) => c.dayNumber === selectedDay);
   const targetCapacity = targetCol?.capacityMinutes || 150;
-  const projectedTotal = targetCurrentMins + (card?.durationMinutes || 0);
+  const projectedTotal = targetCurrentMins + movingMinutes;
   const isOverCapacity = projectedTotal > targetCapacity;
 
   // Reset override whenever target day changes
@@ -64,11 +103,17 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
 
   const handleConfirm = () => {
     if (futureDays.length === 0 || selectedDay === card.dayNumber) return;
-    onConfirmShift(card.id, Number(selectedDay));
+    if (hasMultipleTopics && isNoneSelected) return;
+
+    onConfirmShift(
+      card.id,
+      Number(selectedDay),
+      hasMultipleTopics ? selectedTopicIds : undefined
+    );
     onClose();
   };
 
-  const topicCount = card.topics?.length || 1;
+  const topicCount = cardTopics.length > 0 ? cardTopics.length : 1;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in">
@@ -81,10 +126,14 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
             </div>
             <div>
               <h3 className="text-base text-[#0b1c30] font-bold">
-                Shift Chapter to Another Day
+                {hasMultipleTopics ? 'Shift Topics to Another Day' : 'Shift Chapter to Another Day'}
               </h3>
               <p className="text-xs text-[#404942]">
-                Move all {topicCount} topics of this chapter in one action
+                {hasMultipleTopics
+                  ? isAllSelected
+                    ? `Move all ${topicCount} topics of this chapter in one action`
+                    : `Move ${selectedTopicIds.length} of ${topicCount} topics to Day ${selectedDay}`
+                  : `Move all ${topicCount} topics of this chapter in one action`}
               </p>
             </div>
           </div>
@@ -108,13 +157,80 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-1 rounded bg-white text-[#0b1c30] text-[11px] font-mono font-semibold border border-[#c0c9c0]/30">
-              {card.durationMinutes} min
+              {hasMultipleTopics ? `${movingMinutes}m selected` : `${card.durationMinutes} min`}
             </span>
-            <span className="px-2 py-0.5 rounded bg-[#6ffbbe]/30 text-[#003820] text-[10px] font-bold">
+            <span className="px-2.5 py-0.5 rounded bg-[#6ffbbe]/30 text-[#003820] text-[10px] font-bold">
               Chapter
             </span>
           </div>
         </div>
+
+        {/* Topic Checkbox List (Shown when card has more than 1 topic) */}
+        {hasMultipleTopics && (
+          <div className="space-y-2 border border-[#c0c9c0]/30 rounded-xl p-3 bg-[#f8fafc]">
+            <div className="flex items-center justify-between pb-1.5 border-b border-[#e2e8f0]">
+              <label className="text-xs font-semibold text-[#0b1c30] flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  ref={(input) => {
+                    if (input) {
+                      input.indeterminate =
+                        selectedTopicIds.length > 0 && selectedTopicIds.length < cardTopics.length;
+                    }
+                  }}
+                  onChange={handleToggleSelectAll}
+                  className="rounded border-[#c0c9c0] text-[#003820] focus:ring-[#003820]"
+                />
+                <span>Select Topics to Shift</span>
+              </label>
+              <span className="text-[11px] font-mono text-[#707971]">
+                {selectedTopicIds.length}/{cardTopics.length} selected ({movingMinutes}m)
+              </span>
+            </div>
+
+            <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+              {cardTopics.map((topic) => {
+                const isChecked = selectedTopicIds.includes(topic.id);
+                return (
+                  <label
+                    key={topic.id}
+                    className={`flex items-center justify-between p-2 rounded-lg text-xs border transition-colors cursor-pointer select-none ${
+                      isChecked
+                        ? 'bg-white border-[#003820]/30 shadow-xs'
+                        : 'bg-[#f1f5f9]/70 border-transparent text-[#707971]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleTopic(topic.id)}
+                        className="rounded border-[#c0c9c0] text-[#003820] focus:ring-[#003820]"
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className={`font-semibold truncate ${isChecked ? 'text-[#0b1c30]' : 'text-[#707971]'}`}>
+                          {topic.title}
+                        </span>
+                        {topic.subconcept && (
+                          <span className="text-[10px] text-[#707971] truncate">{topic.subconcept}</span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="font-mono text-[10px] text-[#707971] shrink-0 ml-2">
+                      {topic.durationMinutes}m
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {isNoneSelected && (
+              <p className="text-[11px] text-[#ba1a1a] font-medium pt-1">
+                Select at least one topic to shift.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Form Controls */}
         <div className="space-y-4">
@@ -168,7 +284,7 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
                     Daily Capacity Warning
                   </span>
                   <p className="text-[11px] text-amber-800">
-                    Day {selectedDay} already has {targetCurrentMins} min; adding this chapter makes {projectedTotal} min (target limit: {targetCapacity} min).
+                    Day {selectedDay} already has {targetCurrentMins} min; adding {hasMultipleTopics && !isAllSelected ? `${selectedTopicIds.length} topics (${movingMinutes} min)` : `this load (${movingMinutes} min)`} makes {projectedTotal} min (target limit: {targetCapacity} min).
                   </p>
                 </div>
               </div>
@@ -226,7 +342,12 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
           </button>
           <button
             type="button"
-            disabled={futureDays.length === 0 || selectedDay === card.dayNumber || (isOverCapacity && !overrideCapacity)}
+            disabled={
+              futureDays.length === 0 ||
+              selectedDay === card.dayNumber ||
+              (hasMultipleTopics && isNoneSelected) ||
+              (isOverCapacity && !overrideCapacity)
+            }
             onClick={handleConfirm}
             className="px-5 py-2 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >

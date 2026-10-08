@@ -1,0 +1,12 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+Allow: /login
+Allow: /privacy
+Allow: /terms
+Allow: /cookies
+Allow: /about
+Allow: /contact
+Disallow: /admin-dashboard
+
+Sitemap: https://studytrack.academy/sitemap.xml

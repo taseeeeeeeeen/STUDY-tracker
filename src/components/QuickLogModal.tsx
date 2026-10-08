@@ -1,9 +1,15 @@
 import React, { useState } from 'react';
 
+export interface QuickLogEntry {
+  subject: string;
+  minutes: number;
+  notes: string;
+}
+
 interface QuickLogModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onLogCompleted: (message: string) => void;
+  onLogCompleted: (log: QuickLogEntry) => void | Promise<void>;
 }
 
 export const QuickLogModal: React.FC<QuickLogModalProps> = ({
@@ -14,13 +20,22 @@ export const QuickLogModal: React.FC<QuickLogModalProps> = ({
   const [subject, setSubject] = useState('Physics');
   const [minutes, setMinutes] = useState(30);
   const [notes, setNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLogCompleted(`Logged ${minutes} minutes of ${subject}`);
-    onClose();
+    if (isSubmitting) return;
+
+    try {
+      setIsSubmitting(true);
+      await onLogCompleted({ subject, minutes, notes });
+      setNotes('');
+      onClose();
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

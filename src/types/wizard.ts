@@ -23,6 +23,7 @@ export interface BoardTopic {
   chapterName?: string;
   isCarriedOver?: boolean;
   carriedOverFromDay?: number;
+  dayNumber?: number;
 }
 
 export interface BoardCard {

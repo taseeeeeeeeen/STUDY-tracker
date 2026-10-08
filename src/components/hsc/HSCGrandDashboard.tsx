@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useStudyTrack } from '../../context/StudyTrackContext';
+import { useAuth } from '../../context/AuthContext';
 import { HSCHeroDonuts } from './HSCHeroDonuts';
 import { HSCSubjectAccordion } from './HSCSubjectAccordion';
 import { Link } from 'react-router-dom';
 import { buildProgressReportData, renderProgressReportImage } from '../../utils/progressReport';
+import { resetAllHscProgress } from '../../services/userProgressService';
 
 export const HSCGrandDashboard: React.FC = () => {
   // Global State Synchronization through Context API
@@ -14,8 +16,35 @@ export const HSCGrandDashboard: React.FC = () => {
     toggleHSCPractice,
     triggerToast,
   } = useStudyTrack();
+  const { user } = useAuth();
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  const handleConfirmReset = async () => {
+    if (!user || !user.uid) {
+      triggerToast('You must be signed in to reset progress.');
+      setIsResetModalOpen(false);
+      return;
+    }
+
+    if (isResetting) return;
+    setIsResetting(true);
+
+    try {
+      // Per-user isolation guarantee: writes strictly to user_progress/{user.uid}
+      await resetAllHscProgress(user.uid);
+      setIsResetModalOpen(false);
+      triggerToast('All progress has been reset. Starting fresh at 0%.');
+    } catch (err) {
+      console.error('Failed to reset HSC progress in database:', err);
+      triggerToast('Failed to reset progress. Please try again.');
+      // Do NOT clear local state if the write failed (the database is the source of truth)
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const handleShareProgress = async () => {
     if (isGenerating) return;
@@ -140,11 +169,24 @@ export const HSCGrandDashboard: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex items-center gap-3 self-start md:self-auto">
+            <div className="flex items-center gap-3 self-start md:self-auto flex-wrap">
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(true)}
+                disabled={isResetting || isGenerating}
+                className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 active:scale-95 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Reset all HSC syllabus progress to 0%"
+              >
+                <span className="material-symbols-outlined text-[15px] leading-none text-red-600">
+                  restart_alt
+                </span>
+                <span>{isResetting ? 'Resetting...' : 'Reset All Progress'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleShareProgress}
-                disabled={isGenerating}
+                disabled={isGenerating || isResetting}
                 className="bg-[#003820] hover:bg-[#002111] active:scale-95 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <span className="material-symbols-outlined text-[15px] leading-none">
@@ -152,13 +194,6 @@ export const HSCGrandDashboard: React.FC = () => {
                 </span>
                 <span>{isGenerating ? 'Generating...' : 'Share Progress'}</span>
               </button>
-
-              <div className="bg-[#eff4ff] px-3.5 py-1.5 rounded-xl flex items-center gap-2 border border-[#c0c9c0]/30 text-xs">
-                <span className="w-2 h-2 rounded-full bg-[#006c49]" />
-                <span className="text-[#0b1c30] font-medium font-mono">
-                  Session 2025-2026 • Science Division
-                </span>
-              </div>
             </div>
           </div>
 
@@ -206,6 +241,71 @@ export const HSCGrandDashboard: React.FC = () => {
           </div>
         </div>
       </main>
+
+      {/* Confirmation Modal for Resetting All HSC Progress */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-red-300 flex flex-col gap-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-2xl">restart_alt</span>
+              </div>
+              <div>
+                <h3 className="text-base text-[#0b1c30] font-bold">
+                  Reset All HSC Progress?
+                </h3>
+                <p className="text-xs text-[#404942]">
+                  Start fresh from 0% curriculum completion
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-xs text-[#0b1c30] space-y-2">
+              <p className="leading-relaxed">
+                All theory/practice marks, MCQ/CQ progress, and completion dates will be{' '}
+                <strong>PERMANENTLY deleted</strong> from <strong>YOUR account only</strong>.
+              </p>
+              <p className="leading-relaxed text-[#404942]">
+                Other users are not affected, and the syllabus will be fully unselected to re-select from 0%.
+              </p>
+              <p className="text-[11px] font-semibold text-red-700">
+                ⚠️ This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#e5eeff]">
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={() => setIsResetModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-[#404942] hover:bg-[#eff4ff] text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={handleConfirmReset}
+                className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isResetting ? (
+                  <>
+                    <span className="material-symbols-outlined text-sm animate-spin">
+                      progress_activity
+                    </span>
+                    <span>Resetting...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-sm">restart_alt</span>
+                    <span>Yes, Reset Everything</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

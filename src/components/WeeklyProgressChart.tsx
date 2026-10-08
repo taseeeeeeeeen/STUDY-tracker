@@ -23,6 +23,11 @@ export const WeeklyProgressChart: React.FC<WeeklyProgressChartProps> = ({
   // Maximum possible value for scale normalization
   const maxScaleValue = Math.max(15, ...weeklyStats.map((s) => s.done + s.remaining));
 
+  // Dynamically scale horizontal spacing and bar width to fit any number of subjects within the 320 viewBox
+  const count = weeklyStats.length;
+  const stepX = count > 0 ? 320 / count : 42;
+  const barWidth = Math.max(8, Math.min(20, stepX * 0.55));
+
   return (
     <div className="bg-white p-6 rounded-2xl shadow-xs border border-[#c0c9c0]/30 space-y-4">
       <div className="flex items-center justify-between">
@@ -87,12 +92,8 @@ export const WeeklyProgressChart: React.FC<WeeklyProgressChartProps> = ({
 
           {/* Render Subject Vertical Stacked Bars */}
           {weeklyStats.map((item, index) => {
-            const barWidth = 20;
-            // 7 bars evenly spaced across 320px
-            const startX = 18;
-            const stepX = 42;
-            const x = startX + index * stepX;
-            const centerX = x + barWidth / 2;
+            const centerX = (index + 0.5) * stepX;
+            const x = centerX - barWidth / 2;
 
             // Mathematical calculation of heights
             const doneHeight = (item.done / maxScaleValue) * maxBarHeight;

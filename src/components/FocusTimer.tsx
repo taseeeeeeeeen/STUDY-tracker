@@ -10,7 +10,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
-  const [sprintCount, setSprintCount] = useState(2);
+  const [sprintCount, setSprintCount] = useState(0);
 
   useEffect(() => {
     let timer: NodeJS.Timeout | null = null;
@@ -20,7 +20,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
           if (prev <= 1) {
             clearInterval(timer!);
             setIsRunning(false);
-            setSprintCount((c) => Math.min(4, c + 1));
+            setSprintCount((c) => c + 1);
             return 0;
           }
           return prev - 1;
@@ -85,7 +85,9 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
           {currentTopicTitle}
         </p>
         <span className="text-xs text-[#404942] mt-0.5">
-          Session {sprintCount} of 4
+          {sprintCount === 0
+            ? '0 sessions completed'
+            : `${sprintCount} session${sprintCount > 1 ? 's' : ''} completed`}
         </span>
       </div>
 

@@ -114,9 +114,6 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
               <span className="text-4xl text-[#0b1c30] font-bold tracking-tight tabular-nums">
                 {roundedPercent}%
               </span>
-              <span className="text-xs text-[#006c49] font-semibold bg-[#6ffbbe]/20 px-2 py-0.5 rounded-md">
-                +14% vs yesterday
-              </span>
             </div>
             <p className="text-[11px] text-[#404942]">
               {completedUnits} of {totalUnits} study units completed
@@ -155,9 +152,19 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
           <span>
             {completedTopicsCount} of {totalTopicsCount} topics finished today
           </span>
-          <span className="text-[#006c49] font-medium flex items-center gap-1">
-            <span className="material-symbols-outlined text-sm">trending_up</span> On Track
-          </span>
+          {completedTopicsCount === totalTopicsCount && totalTopicsCount > 0 ? (
+            <span className="text-[#006c49] font-medium flex items-center gap-1">
+              <span className="material-symbols-outlined text-sm">check_circle</span> Completed
+            </span>
+          ) : completedTopicsCount > 0 ? (
+            <span className="text-[#006c49] font-medium flex items-center gap-1">
+              <span className="material-symbols-outlined text-sm">trending_up</span> In Progress
+            </span>
+          ) : (
+            <span className="text-[#707971] font-medium flex items-center gap-1">
+              <span className="material-symbols-outlined text-sm">schedule</span> Pending
+            </span>
+          )}
         </div>
       </div>
 

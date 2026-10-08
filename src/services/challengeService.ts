@@ -23,8 +23,16 @@ const COLLECTION_NAME = 'challenges';
 export function generateChallengeCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let rand = '';
-  for (let i = 0; i < 6; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const buffer = new Uint8Array(6);
+    crypto.getRandomValues(buffer);
+    for (let i = 0; i < 6; i++) {
+      rand += chars.charAt(buffer[i] % chars.length);
+    }
+  } else {
+    for (let i = 0; i < 6; i++) {
+      rand += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
   }
   return `CH-${rand}`;
 }
@@ -39,37 +47,63 @@ export async function createFirestoreChallenge(
     challenge.challenge_id ||
     `ch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-  // Generate a unique code if one isn't provided
+  const maxRetries = 5;
+  let attempts = 0;
   let code = challenge.code;
-  if (!code) {
-    let isUnique = false;
-    let attempts = 0;
-    while (!isUnique && attempts < 5) {
-      const candidate = generateChallengeCode();
-      const existing = await findChallengeByCode(candidate);
-      if (!existing) {
-        code = candidate;
-        isUnique = true;
+
+  while (attempts < maxRetries) {
+    attempts++;
+
+    // Generate a candidate code if not provided or if regenerating after a detected collision
+    if (!code || attempts > 1) {
+      let candidate = generateChallengeCode();
+      let candidateAttempts = 0;
+      while (candidateAttempts < 5) {
+        candidateAttempts++;
+        const existing = await findChallengeByCode(candidate);
+        if (!existing || existing.challenge_id === challengeId) {
+          break;
+        }
+        candidate = generateChallengeCode();
       }
-      attempts++;
+      code = candidate;
     }
-    // Fallback if somehow collisions persist
-    if (!code) code = generateChallengeCode();
+
+    const finalPayload: FirestoreChallenge = {
+      ...challenge,
+      challenge_id: challengeId,
+      code,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await setDoc(doc(db, COLLECTION_NAME, challengeId), finalPayload);
+
+      // Verify write-time uniqueness:
+      // Query for any other challenges sharing this exact code to catch concurrent race writes
+      const q = query(
+        collection(db, COLLECTION_NAME),
+        where('code', '==', code)
+      );
+      const snap = await getDocs(q);
+
+      // Check if any DIFFERENT challenge document shares this code
+      const hasCollision = snap.docs.some((d) => d.id !== challengeId);
+
+      if (!hasCollision) {
+        return finalPayload;
+      }
+
+      console.warn(
+        `Challenge code collision detected for "${code}" at write time (attempt ${attempts}/${maxRetries}). Retrying with a new code...`
+      );
+      code = undefined;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `${COLLECTION_NAME}/${challengeId}`);
+    }
   }
 
-  const finalPayload: FirestoreChallenge = {
-    ...challenge,
-    challenge_id: challengeId,
-    code,
-    updatedAt: new Date().toISOString(),
-  };
-
-  try {
-    await setDoc(doc(db, COLLECTION_NAME, challengeId), finalPayload);
-    return finalPayload;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `${COLLECTION_NAME}/${challengeId}`);
-  }
+  throw new Error(`Failed to assign a unique challenge code after ${maxRetries} attempts.`);
 }
 
 function logSnapshotError(error: unknown, operationType: OperationType, path: string) {
@@ -139,7 +173,14 @@ export async function findChallengeByCode(
     );
     const snap = await getDocs(q);
     if (snap.empty) return null;
-    return snap.docs[0].data() as FirestoreChallenge;
+    if (snap.docs.length === 1) {
+      return snap.docs[0].data() as FirestoreChallenge;
+    }
+    // If multiple documents match, prefer active challenge with the most recent update
+    const all = snap.docs
+      .map((d) => d.data() as FirestoreChallenge)
+      .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+    return all.find((c) => c.status !== 'archived') || all[0];
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, COLLECTION_NAME);
   }

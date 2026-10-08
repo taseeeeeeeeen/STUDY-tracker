@@ -42,7 +42,7 @@ import { useStudyTrack } from '../../context/StudyTrackContext';
 import { DroppableDayColumn } from './DroppableDayColumn';
 import { ShiftTopicModal } from './ShiftTopicModal';
 import { StartChallengeModal } from './StartChallengeModal';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 interface ChallengeWizardProps {
   onBackToDashboard?: () => void;
@@ -123,34 +123,73 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   const { user, isAdmin } = useAuth();
   const { activeChallenge, setActiveChallenge, currentTime } = useStudyTrack();
 
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Strategy Planner Import Hydration
+  const strategyImportData = (location.state as any)?.strategyImport as
+    | {
+        examName: string;
+        prepStartDate: string;
+        examStartDate: string;
+        durationDays: number;
+        dayWiseAllocation: Record<string, unknown[]>;
+        selectedTopicIds: string[];
+      }
+    | undefined;
+
+  const parsedImport = useMemo(() => {
+    if (!strategyImportData?.dayWiseAllocation) return null;
+    return parseCardsFromAllocation(strategyImportData.dayWiseAllocation);
+  }, [strategyImportData]);
+
   // 3-Step Wizard Flow State: 1 = Config, 2 = Topics, 3 = Schedule
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
 
+  // When strategyImportData is present, it takes over the wizard as a fresh challenge (do not auto-load saved active challenge)
   const initialChallenge =
-    activeChallenge && activeChallenge.status !== 'archived' ? activeChallenge : null;
-  const initialRestored = initialChallenge?.day_wise_allocation
+    strategyImportData
+      ? null
+      : activeChallenge && activeChallenge.status !== 'archived'
+      ? activeChallenge
+      : null;
+
+  const initialRestored = parsedImport
+    ? parsedImport
+    : initialChallenge?.day_wise_allocation
     ? parseCardsFromAllocation(initialChallenge.day_wise_allocation as Record<string, unknown[]>)
     : { cards: [], order: [] };
 
   // STEP 1: Duration selection (7, 14, 21, 30 or custom 5-60 days)
   const [duration, setDuration] = useState<SprintDuration | null>(
-    (initialChallenge?.duration as SprintDuration) || null
+    strategyImportData
+      ? (strategyImportData.durationDays as SprintDuration)
+      : (initialChallenge?.duration as SprintDuration) || null
   );
   const [isCustomDuration, setIsCustomDuration] = useState<boolean>(
     Boolean(
-      initialChallenge?.duration &&
-        ![7, 14, 21, 30].includes(Number(initialChallenge.duration))
+      strategyImportData ||
+        (initialChallenge?.duration &&
+          ![7, 14, 21, 30].includes(Number(initialChallenge.duration)))
     )
   );
   const [customDurationInput, setCustomDurationInput] = useState<string>(
-    initialChallenge?.duration &&
-      ![7, 14, 21, 30].includes(Number(initialChallenge.duration))
+    strategyImportData
+      ? String(strategyImportData.durationDays)
+      : initialChallenge?.duration &&
+        ![7, 14, 21, 30].includes(Number(initialChallenge.duration))
       ? String(initialChallenge.duration)
       : ''
   );
-  const [challengeName, setChallengeName] = useState(initialChallenge?.challenge_name || '');
+  const [challengeName, setChallengeName] = useState(
+    strategyImportData
+      ? `${strategyImportData.examName} Prep`
+      : initialChallenge?.challenge_name || ''
+  );
   const [startDate, setStartDate] = useState<string | null>(
-    initialChallenge?.start_date
+    strategyImportData
+      ? strategyImportData.prepStartDate
+      : initialChallenge?.start_date
       ? getLocalDateString(parseLocalDate(initialChallenge.start_date))
       : null
   );
@@ -210,6 +249,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Drag and Drop active item
   const [activeCard, setActiveCard] = useState<BoardCard | null>(null);
+  const [activeTopic, setActiveTopic] = useState<BoardTopic | null>(null);
 
   // Topic Shift Modal state
   const [shiftModalCard, setShiftModalCard] = useState<BoardCard | null>(null);
@@ -348,6 +388,17 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           return;
         }
 
+        if (importedTopicIdsRef.current) {
+          const importSet = importedTopicIdsRef.current;
+          setSyllabus(
+            dedupedItems.map((item) => ({
+              ...item,
+              checked: importSet.has(item.id),
+            }))
+          );
+          return;
+        }
+
         const challengeToUse =
           loadedChallenge && loadedChallenge.status !== 'archived'
             ? loadedChallenge
@@ -383,13 +434,41 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Track order in which chapters were selected
   const chapterOrderRef = useRef<string[]>(initialRestored.order);
-  const userEditedSyllabusRef = useRef(false);
-  const hasPromptedResumeRef = useRef(false);
+  const userEditedSyllabusRef = useRef(Boolean(strategyImportData));
+  const hasPromptedResumeRef = useRef(Boolean(strategyImportData));
+  const importedTopicIdsRef = useRef<Set<string> | null>(
+    strategyImportData?.selectedTopicIds ? new Set(strategyImportData.selectedTopicIds) : null
+  );
+  const isImportedBoardRef = useRef<boolean>(Boolean(strategyImportData));
   const savedAllocationRef = useRef<Record<string, BoardCard[]> | null>(
     (initialChallenge?.day_wise_allocation as Record<string, BoardCard[]>) || null
   );
-  const [loadingChallenge, setLoadingChallenge] = useState(!initialChallenge);
+  const [loadingChallenge, setLoadingChallenge] = useState(!initialChallenge && !strategyImportData);
   const [loadedChallenge, setLoadedChallenge] = useState<FirestoreChallenge | null>(initialChallenge);
+
+  // Strategy Planner Import Hydration & Router State Cleanup
+  useEffect(() => {
+    if (strategyImportData) {
+      // DATE SEMANTICS:
+      // durationDays = number of days from prep start through exam eve, i.e. (examStart - prepStart) in whole days.
+      // The wizard's Step 1 start date = prep start date; the challenge's last study day is the day before the exam.
+      // Note: to include exam day in the future, change formula to: (examStart - prepStart) + 1.
+
+      // If syllabus was already loaded, mark selected topics checked:
+      if (syllabus.length > 0 && strategyImportData.selectedTopicIds?.length > 0) {
+        const idSet = new Set(strategyImportData.selectedTopicIds);
+        setSyllabus((prev) =>
+          prev.map((item) => ({
+            ...item,
+            checked: idSet.has(item.id),
+          }))
+        );
+      }
+
+      // Clear the router state after hydrating so a page refresh does not re-import
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, []);
 
   // Sync active challenge from context or Firestore: prompt user instead of silently auto-loading
   useEffect(() => {
@@ -536,6 +615,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       return;
     }
 
+    // Do not re-balance the imported board on entry (imported day assignments are intentional)
+    if (isImportedBoardRef.current) {
+      return;
+    }
+
     // Maintain stable order of chapters as selected
     const currentChapterIds = Array.from(groupsMap.keys());
     const updatedOrder = Array.from(
@@ -670,21 +754,143 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     }
   };
 
+  // moveTopicsToDay algorithm (mirrors performMidnightRollover's single-topic pattern)
+  const moveTopicsToDay = (
+    topicsToMove: BoardTopic[],
+    sourceCard: BoardCard,
+    targetDay: number
+  ) => {
+    if (!topicsToMove || topicsToMove.length === 0) return;
+    const originalDay = sourceCard.dayNumber;
+    if (originalDay === targetDay) return;
+
+    const topicIdsToMove = new Set(topicsToMove.map((t) => t.id));
+    const chapterId = sourceCard.chapterId || sourceCard.id;
+    const chapterName = sourceCard.chapterName || sourceCard.title;
+
+    const movedTopics: BoardTopic[] = topicsToMove.map((t) => ({
+      ...t,
+      dayNumber: targetDay,
+      chapterId,
+      chapterName,
+      subject: t.subject || sourceCard.subject,
+    }));
+
+    // Find current source card from latest boardCards state
+    const currentSource = boardCards.find((c) => c.id === sourceCard.id) || sourceCard;
+    const remainingTopics = (currentSource.topics || []).filter(
+      (t) => !topicIdsToMove.has(t.id)
+    );
+
+    const nextCards: BoardCard[] = [];
+    let foundTarget = false;
+
+    for (const c of boardCards) {
+      if (c.id === sourceCard.id) {
+        if (remainingTopics.length > 0) {
+          const remainingDuration = remainingTopics.reduce(
+            (sum, t) => sum + (t.durationMinutes || 0),
+            0
+          );
+          nextCards.push({
+            ...c,
+            topics: remainingTopics,
+            durationMinutes: remainingDuration,
+            tag: `${remainingTopics.length} ${
+              remainingTopics.length === 1 ? 'topic' : 'topics'
+            }`,
+            isCarriedOver: remainingTopics.some((t) => t.isCarriedOver),
+          });
+        }
+        // If remainingTopics is empty, card is omitted entirely from nextCards
+      } else if (
+        c.dayNumber === targetDay &&
+        (c.chapterId || c.id) === chapterId &&
+        !foundTarget
+      ) {
+        foundTarget = true;
+        const existingTopics = (c.topics || []).filter(
+          (t) => !topicIdsToMove.has(t.id)
+        );
+        const combinedTopics = [...existingTopics, ...movedTopics];
+        const combinedDuration = combinedTopics.reduce(
+          (sum, t) => sum + (t.durationMinutes || 0),
+          0
+        );
+        nextCards.push({
+          ...c,
+          topics: combinedTopics,
+          durationMinutes: combinedDuration,
+          tag: `${combinedTopics.length} ${
+            combinedTopics.length === 1 ? 'topic' : 'topics'
+          }`,
+          isCarriedOver: Boolean(c.isCarriedOver || combinedTopics.some((t) => t.isCarriedOver)),
+        });
+      } else {
+        nextCards.push(c);
+      }
+    }
+
+    if (!foundTarget) {
+      const totalMins = movedTopics.reduce(
+        (sum, t) => sum + (t.durationMinutes || 0),
+        0
+      );
+      const newCard: BoardCard = {
+        id: `chapter-${chapterId}-day-${targetDay}`,
+        chapterId,
+        chapterName,
+        subject: sourceCard.subject,
+        title: chapterName,
+        dayNumber: targetDay,
+        topics: movedTopics,
+        durationMinutes: totalMins,
+        tag: `${movedTopics.length} ${
+          movedTopics.length === 1 ? 'topic' : 'topics'
+        }`,
+        isCarriedOver: movedTopics.some((t) => t.isCarriedOver),
+      };
+      nextCards.push(newCard);
+    }
+
+    setBoardCards(nextCards);
+
+    // Auto-save instantly to Firestore if challenge is saved
+    if (isChallengeSaved && savedChallengeId) {
+      persistAllocation(nextCards);
+    }
+  };
+
+  const moveTopicToDay = (
+    topic: BoardTopic,
+    sourceCard: BoardCard,
+    targetDay: number
+  ) => {
+    moveTopicsToDay([topic], sourceCard, targetDay);
+  };
+
   // DnD Handlers - Unlocked pre-save
   const handleDragStart = (event: DragStartEvent) => {
+    const topicData = event.active.data.current?.topic as BoardTopic | undefined;
+    if (topicData) {
+      setActiveTopic(topicData);
+      setActiveCard(null);
+      return;
+    }
     const cardData = event.active.data.current?.card as BoardCard | undefined;
     if (cardData) {
       setActiveCard(cardData);
+      setActiveTopic(null);
     }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveCard(null);
+    setActiveTopic(null);
 
     if (!over) return;
 
-    const draggedCard = active.data.current?.card as BoardCard | undefined;
     const targetColumn: DayColumnData | undefined =
       (over.data.current?.column as DayColumnData | undefined) ||
       (over.data.current?.dayNumber !== undefined
@@ -694,11 +900,83 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         ? columns.find((c) => c.dayNumber === parseInt(String(over.id).replace('column-', ''), 10))
         : undefined);
 
-    if (!draggedCard || !targetColumn) return;
-
-    const originalDay = draggedCard.dayNumber;
+    if (!targetColumn) return;
     const targetDay = targetColumn.dayNumber;
 
+    // BRANCH 1: Topic-level drag and drop
+    const draggedTopic = active.data.current?.topic as BoardTopic | undefined;
+    const sourceCard = active.data.current?.sourceCard as BoardCard | undefined;
+
+    if (draggedTopic && sourceCard) {
+      const originalDay = sourceCard.dayNumber;
+      if (originalDay === targetDay) return;
+
+      // VALIDATION 1: Prevent dropping ANY item into a past column for ongoing challenges
+      if (isChallengeSaved && targetDay < currentDay) {
+        showToast(
+          `Academic records for Day ${targetDay} are sealed. You can only schedule for Day ${currentDay} (Today) or upcoming days.`,
+          'error'
+        );
+        return;
+      }
+
+      const targetCol = columns.find((c) => c.dayNumber === targetDay);
+      const capacity = targetCol?.capacityMinutes || 150;
+      const currentMinutes = boardCards
+        .filter((c) => c.dayNumber === targetDay)
+        .reduce((sum, c) => sum + c.durationMinutes, 0);
+      const newTotal = currentMinutes + draggedTopic.durationMinutes;
+
+      const executeTopicDrop = () => {
+        if (isChallengeSaved && originalDay < currentDay) {
+          showToast(
+            `Moved "${draggedTopic.title}" from Day ${originalDay} to Day ${targetDay}.`,
+            'success'
+          );
+        } else {
+          showToast(
+            `Moved "${draggedTopic.title}" to Day ${targetDay}.`,
+            'info'
+          );
+        }
+        moveTopicToDay(draggedTopic, sourceCard, targetDay);
+      };
+
+      // Capacity enforcement with deliberate override
+      if (newTotal > capacity) {
+        setCapacityWarning({
+          isOpen: true,
+          card: {
+            id: `topic-${draggedTopic.id}`,
+            chapterId: sourceCard.chapterId || sourceCard.id,
+            chapterName: sourceCard.chapterName || sourceCard.title,
+            subject: draggedTopic.subject || sourceCard.subject,
+            title: draggedTopic.title,
+            durationMinutes: draggedTopic.durationMinutes,
+            dayNumber: targetDay,
+            tag: '1 topic',
+          },
+          targetDay,
+          currentMinutes,
+          newTotal,
+          capacity,
+          onConfirm: () => {
+            executeTopicDrop();
+            setCapacityWarning(null);
+          },
+        });
+        return;
+      }
+
+      executeTopicDrop();
+      return;
+    }
+
+    // BRANCH 2: Card-level drag and drop (kept unchanged)
+    const draggedCard = active.data.current?.card as BoardCard | undefined;
+    if (!draggedCard) return;
+
+    const originalDay = draggedCard.dayNumber;
     if (originalDay === targetDay) return;
 
     // VALIDATION 1: Prevent dropping ANY card into a past column for ongoing challenges
@@ -779,7 +1057,11 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     setIsShiftModalOpen(true);
   };
 
-  const handleConfirmShift = (targetDay: number, overrideCapacity = false) => {
+  const handleConfirmShift = (
+    targetDay: number,
+    overrideCapacity = false,
+    selectedTopicIds?: string[]
+  ) => {
     if (!shiftModalCard) return;
 
     if (isChallengeSaved && targetDay < currentDay) {
@@ -793,44 +1075,84 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       return;
     }
 
+    const cardTopics = shiftModalCard.topics || [];
+    const isSubset = Boolean(
+      selectedTopicIds &&
+      cardTopics.length > 1 &&
+      selectedTopicIds.length < cardTopics.length
+    );
+
+    const topicsToMove = isSubset
+      ? cardTopics.filter((t) => selectedTopicIds!.includes(t.id))
+      : cardTopics;
+
+    const movingMinutes = isSubset
+      ? topicsToMove.reduce((sum, t) => sum + (t.durationMinutes || 0), 0)
+      : shiftModalCard.durationMinutes;
+
     const targetCol = columns.find((c) => c.dayNumber === targetDay);
     const capacity = targetCol?.capacityMinutes || 150;
     const currentMinutes = boardCards
       .filter((c) => c.dayNumber === targetDay && c.id !== shiftModalCard.id)
       .reduce((sum, c) => sum + c.durationMinutes, 0);
-    const newTotal = currentMinutes + shiftModalCard.durationMinutes;
+    const newTotal = currentMinutes + movingMinutes;
 
     const executeShift = () => {
-      const nextCards = boardCards.map((c) => {
-        if (c.id === shiftModalCard.id) {
-          return {
-            ...c,
-            dayNumber: targetDay,
-            topics: (c.topics || []).map((t) => ({ ...t, dayNumber: targetDay })),
-          };
+      if (isSubset) {
+        // Shift only the checked topics using moveTopicsToDay
+        moveTopicsToDay(topicsToMove, shiftModalCard, targetDay);
+        if (topicsToMove.length === 1) {
+          showToast(`Moved "${topicsToMove[0].title}" to Day ${targetDay}.`, 'success');
+        } else {
+          showToast(
+            `Moved ${topicsToMove.length} topics from "${shiftModalCard.chapterName || shiftModalCard.title}" to Day ${targetDay}.`,
+            'success'
+          );
         }
-        return c;
-      });
-      setBoardCards(nextCards);
+      } else {
+        // Keep whole-chapter behavior when all are checked
+        const nextCards = boardCards.map((c) => {
+          if (c.id === shiftModalCard.id) {
+            return {
+              ...c,
+              dayNumber: targetDay,
+              topics: (c.topics || []).map((t) => ({ ...t, dayNumber: targetDay })),
+            };
+          }
+          return c;
+        });
+        setBoardCards(nextCards);
 
-      showToast(
-        `Moved "${shiftModalCard.chapterName || shiftModalCard.title}" to Day ${targetDay}.`,
-        'success'
-      );
+        showToast(
+          `Moved "${shiftModalCard.chapterName || shiftModalCard.title}" to Day ${targetDay}.`,
+          'success'
+        );
+
+        // Auto-save instantly to Firestore if saved
+        if (isChallengeSaved && savedChallengeId) {
+          persistAllocation(nextCards);
+        }
+      }
+
       setIsShiftModalOpen(false);
       setShiftModalCard(null);
-
-      // Auto-save instantly to Firestore if saved
-      if (isChallengeSaved && savedChallengeId) {
-        persistAllocation(nextCards);
-      }
     };
 
     // Capacity enforcement with deliberate override
     if (newTotal > capacity && !overrideCapacity) {
       setCapacityWarning({
         isOpen: true,
-        card: shiftModalCard,
+        card: isSubset
+          ? {
+              id: `subset-${shiftModalCard.id}`,
+              title: `${topicsToMove.length} topics from ${shiftModalCard.chapterName || shiftModalCard.title}`,
+              chapterName: shiftModalCard.chapterName || shiftModalCard.title,
+              subject: shiftModalCard.subject,
+              durationMinutes: movingMinutes,
+              dayNumber: targetDay,
+              tag: `${topicsToMove.length} topics`,
+            }
+          : shiftModalCard,
         targetDay,
         currentMinutes,
         newTotal,
@@ -1566,23 +1888,50 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   const handleArchiveAndStartNew = async () => {
     if (!activeChallengeConflict) return;
+    const oldName = activeChallengeConflict.challenge_name || 'Previous challenge';
+    const oldId = activeChallengeConflict.challenge_id;
+
     try {
-      await archiveChallenge(activeChallengeConflict.challenge_id);
-      showToast(`Archived previous challenge "${activeChallengeConflict.challenge_name}".`, 'info');
+      await archiveChallenge(oldId);
+      showToast(`Archived previous challenge "${oldName}".`, 'info');
       setActiveChallengeConflict(null);
+    } catch (err) {
+      console.error('Failed to archive existing challenge:', err);
+      showToast(`Failed to archive challenge "${oldName}".`, 'error');
+      return;
+    }
+
+    try {
       const selected = syllabus.filter((s) => s.checked);
       await executeCreateChallenge(selected);
     } catch (err) {
-      console.error('Failed to archive existing challenge:', err);
-      showToast('Failed to archive existing challenge.', 'error');
+      console.error('Failed to create new challenge after archiving:', err);
+      showToast(
+        `Your old challenge "${oldName}" was archived, but the new challenge failed to save. Please try saving again.`,
+        'error'
+      );
     }
   };
 
   const handleDeleteAndStartNew = async () => {
     if (!activeChallengeConflict) return;
+
+    const otherParticipants = (activeChallengeConflict.participants || []).filter(
+      (p) => p.uid !== user?.uid
+    );
+    const otherCount = otherParticipants.length;
+
+    if (otherCount > 0) {
+      const countText = `${otherCount} other member${otherCount > 1 ? 's' : ''} will lose access`;
+      const confirmed = window.confirm(
+        `Warning: Deleting "${activeChallengeConflict.challenge_name || 'this challenge'}" cannot be undone. ${countText}. Are you sure you want to delete it?`
+      );
+      if (!confirmed) return;
+    }
+
     try {
       await deleteFirestoreChallenge(activeChallengeConflict.challenge_id);
-      showToast(`Deleted previous challenge "${activeChallengeConflict.challenge_name}".`, 'info');
+      showToast(`Deleted previous challenge "${activeChallengeConflict.challenge_name || 'Previous challenge'}".`, 'info');
       setActiveChallengeConflict(null);
       const selected = syllabus.filter((s) => s.checked);
       await executeCreateChallenge(selected);
@@ -1595,6 +1944,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
   // Syllabus selection helpers
   const handleToggleSyllabus = (id: string) => {
     userEditedSyllabusRef.current = true;
+    isImportedBoardRef.current = false;
+    importedTopicIdsRef.current = null;
     setSyllabus((prev) =>
       prev.map((s) => (s.id === id ? { ...s, checked: !s.checked } : s))
     );
@@ -1602,6 +1953,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   const handleToggleChapterSyllabus = (_chapterId: string, chapterTopics: { id: string }[], allChecked: boolean) => {
     userEditedSyllabusRef.current = true;
+    isImportedBoardRef.current = false;
+    importedTopicIdsRef.current = null;
     const topicIds = chapterTopics.map((t) => t.id);
     setSyllabus((prev) =>
       prev.map((s) => {
@@ -1615,6 +1968,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   const handleToggleSubjectSyllabus = (topicIds: string[], targetChecked: boolean) => {
     userEditedSyllabusRef.current = true;
+    isImportedBoardRef.current = false;
+    importedTopicIdsRef.current = null;
     const idSet = new Set(topicIds);
     setSyllabus((prev) =>
       prev.map((s) => {
@@ -1628,6 +1983,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   const handleSelectAllFiltered = () => {
     userEditedSyllabusRef.current = true;
+    isImportedBoardRef.current = false;
+    importedTopicIdsRef.current = null;
     setSyllabus((prev) =>
       prev.map((s) => (visibleTopicIds.has(s.id) ? { ...s, checked: true } : s))
     );
@@ -1635,6 +1992,8 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   const handleClearSelection = () => {
     userEditedSyllabusRef.current = true;
+    isImportedBoardRef.current = false;
+    importedTopicIdsRef.current = null;
     setSyllabus((prev) => prev.map((s) => ({ ...s, checked: false })));
   };
 
@@ -2650,7 +3009,17 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
               {/* Drag Overlay Ghost Card */}
               <DragOverlay>
-                {activeCard && (
+                {activeTopic ? (
+                  <div className="p-2.5 rounded-lg bg-white border-2 border-emerald-500 shadow-2xl rotate-2 opacity-95 w-60">
+                    <div className="flex items-center justify-between text-[11px] mb-0.5">
+                      <span className="font-bold text-[#0b1c30] truncate">{activeTopic.title}</span>
+                      <span className="text-[#707971] font-mono shrink-0 ml-1">{activeTopic.durationMinutes}m</span>
+                    </div>
+                    {activeTopic.subconcept && (
+                      <div className="text-[10px] text-[#707971] truncate">{activeTopic.subconcept}</div>
+                    )}
+                  </div>
+                ) : activeCard ? (
                   <div className="p-3.5 rounded-xl bg-white border-2 border-blue-500 shadow-2xl rotate-2 opacity-95 w-72">
                     <div className="flex items-center justify-between text-[11px] mb-1">
                       <span className="font-bold text-blue-700">{activeCard.subject}</span>
@@ -2664,7 +3033,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
                       {(activeCard.topics?.length || 1) === 1 ? 'topic' : 'topics'}
                     </div>
                   </div>
-                )}
+                ) : null}
               </DragOverlay>
             </DndContext>
           </section>
@@ -2679,7 +3048,9 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         currentDay={currentDay}
         columns={columns}
         cards={boardCards}
-        onConfirmShift={(_cardId, targetDay) => handleConfirmShift(targetDay)}
+        onConfirmShift={(_cardId, targetDay, selectedTopicIds) =>
+          handleConfirmShift(targetDay, false, selectedTopicIds)
+        }
       />
 
       <StartChallengeModal

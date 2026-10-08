@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { BoardCard } from '../../types/wizard';
+import { BoardCard, BoardTopic } from '../../types/wizard';
 
 interface DraggableTopicCardProps {
   card: BoardCard;
@@ -11,6 +11,94 @@ interface DraggableTopicCardProps {
   onRemoveTopic?: (topicId: string, topicTitle?: string) => void;
   onRemoveCard?: (card: BoardCard) => void;
 }
+
+interface DraggableTopicRowProps {
+  topic: BoardTopic;
+  sourceCard: BoardCard;
+  isBoardLocked: boolean;
+  onRemoveTopic?: (topicId: string, topicTitle?: string) => void;
+}
+
+const DraggableTopicRow: React.FC<DraggableTopicRowProps> = ({
+  topic,
+  sourceCard,
+  isBoardLocked,
+  onRemoveTopic,
+}) => {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `topic-${topic.id}`,
+    disabled: isBoardLocked,
+    data: {
+      topic,
+      sourceCard,
+    },
+  });
+
+  const rowStyle: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.3 : 1,
+    touchAction: isBoardLocked ? 'auto' : 'none',
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={rowStyle}
+      {...attributes}
+      {...listeners}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        listeners?.onPointerDown?.(e);
+      }}
+      className={`p-2 rounded-lg text-[11px] border transition-all flex items-center justify-between gap-2 select-none ${
+        isBoardLocked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing hover:shadow-xs'
+      } ${
+        topic.isCarriedOver
+          ? 'bg-red-50/80 border-red-300 text-red-900 ring-1 ring-red-400/20'
+          : 'bg-[#f8fafc] border-[#e2e8f0] text-[#0b1c30]'
+      }`}
+    >
+      <div className="flex flex-col min-w-0 pointer-events-none">
+        <span className="font-semibold truncate">{topic.title}</span>
+        {topic.subconcept && (
+          <span className="text-[10px] text-[#707971] truncate">{topic.subconcept}</span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1.5 shrink-0">
+        {topic.isCarriedOver && (
+          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-red-100 text-red-700 border border-red-300">
+            Spilled
+          </span>
+        )}
+        <span className="font-mono text-[10px] text-[#707971]">
+          {topic.durationMinutes}m
+        </span>
+        {onRemoveTopic && (
+          <button
+            type="button"
+            disabled={isBoardLocked}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isBoardLocked) {
+                onRemoveTopic(topic.id, topic.title);
+              }
+            }}
+            className={`p-0.5 rounded transition-colors ${
+              isBoardLocked
+                ? 'text-[#c0c9c0] cursor-not-allowed'
+                : 'text-[#707971] hover:text-[#ba1a1a] hover:bg-red-50 cursor-pointer'
+            }`}
+            title={`Remove "${topic.title}" from sprint`}
+          >
+            <span className="material-symbols-outlined text-xs leading-none">close</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
   card,
@@ -229,53 +317,13 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
           className="mt-2.5 pt-2 border-t border-[#e5eeff] space-y-1.5"
         >
           {topicsList.map((top, topIdx) => (
-            <div
+            <DraggableTopicRow
               key={`${top.id}-${topIdx}`}
-              className={`p-2 rounded-lg text-[11px] border transition-all flex items-center justify-between gap-2 ${
-                top.isCarriedOver
-                  ? 'bg-red-50/80 border-red-300 text-red-900 ring-1 ring-red-400/20'
-                  : 'bg-[#f8fafc] border-[#e2e8f0] text-[#0b1c30]'
-              }`}
-            >
-              <div className="flex flex-col min-w-0">
-                <span className="font-semibold truncate">{top.title}</span>
-                {top.subconcept && (
-                  <span className="text-[10px] text-[#707971] truncate">{top.subconcept}</span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1.5 shrink-0">
-                {top.isCarriedOver && (
-                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-red-100 text-red-700 border border-red-300">
-                    Spilled
-                  </span>
-                )}
-                <span className="font-mono text-[10px] text-[#707971]">
-                  {top.durationMinutes}m
-                </span>
-                {onRemoveTopic && (
-                  <button
-                    type="button"
-                    disabled={isBoardLocked}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!isBoardLocked) {
-                        onRemoveTopic(top.id, top.title);
-                      }
-                    }}
-                    className={`p-0.5 rounded transition-colors ${
-                      isBoardLocked
-                        ? 'text-[#c0c9c0] cursor-not-allowed'
-                        : 'text-[#707971] hover:text-[#ba1a1a] hover:bg-red-50 cursor-pointer'
-                    }`}
-                    title={`Remove "${top.title}" from sprint`}
-                  >
-                    <span className="material-symbols-outlined text-xs leading-none">close</span>
-                  </button>
-                )}
-              </div>
-            </div>
+              topic={top}
+              sourceCard={card}
+              isBoardLocked={isBoardLocked}
+              onRemoveTopic={onRemoveTopic}
+            />
           ))}
         </div>
       )}

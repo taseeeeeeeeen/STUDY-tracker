@@ -18,16 +18,35 @@ export const StudyModeModal: React.FC<StudyModeModalProps> = ({
 }) => {
   const [seconds, setSeconds] = useState(25 * 60);
   const [isActive, setIsActive] = useState(false);
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+
+  if (prevIsOpen !== isOpen) {
+    setPrevIsOpen(isOpen);
+    if (isOpen) {
+      setSeconds(25 * 60);
+      setIsActive(false);
+    } else {
+      setIsActive(false);
+    }
+  }
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (isActive && seconds > 0) {
-      interval = setInterval(() => setSeconds((s) => s - 1), 1000);
+    if (isOpen && isActive && seconds > 0) {
+      interval = setInterval(() => {
+        setSeconds((s) => {
+          if (s <= 1) {
+            setIsActive(false);
+            return 0;
+          }
+          return s - 1;
+        });
+      }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isActive, seconds]);
+  }, [isOpen, isActive, seconds]);
 
   if (!isOpen) return null;
 

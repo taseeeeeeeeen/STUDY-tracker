@@ -97,30 +97,22 @@ export {
 
 /**
  * Checks whether a topic was fully completed before a specific midnight cutoff timestamp.
- * Reads completion state primarily from participants[].topic_progress (or userProgressDoc).
+ * Reads completion state strictly from the live userProgressDoc.
  */
 export function isTopicCompletedBeforeMidnight(
   topicId: string,
   cutoffTimestampMs: number,
-  userProgressDoc: UserProgressDoc | null,
-  participantProgress?: Record<string, { theory: boolean; practice: boolean }> | null
+  userProgressDoc: UserProgressDoc | null
 ): boolean {
-  // Check participant topic_progress first as primary source of truth
-  if (participantProgress) {
-    const prog = participantProgress[topicId];
-    if (!prog || !prog.theory || !prog.practice) {
-      return false;
-    }
-  } else if (userProgressDoc) {
-    const prog = userProgressDoc.topicProgress?.[topicId];
-    if (!prog || !prog.theory || !prog.practice) {
-      return false;
-    }
-  } else {
+  if (!userProgressDoc) {
+    return false;
+  }
+  const prog = userProgressDoc.topicProgress?.[topicId];
+  if (!prog || !prog.theory || !prog.practice) {
     return false;
   }
 
-  const log = userProgressDoc?.completionLog?.[topicId];
+  const log = userProgressDoc.completionLog?.[topicId];
   if (!log) {
     return true;
   }
@@ -141,7 +133,7 @@ export function performMidnightRollover(
   challenge: FirestoreChallenge,
   userProgressDoc: UserProgressDoc | null,
   nowMs: number = Date.now(),
-  currentUserId?: string
+  _currentUserId?: string
 ): {
   updatedAllocation: Record<string, BoardCard[]>;
   hasChanges: boolean;
@@ -163,11 +155,6 @@ export function performMidnightRollover(
       carriedCount: 0,
     };
   }
-
-  // Find participant topic_progress as completion source of truth
-  const targetUid = currentUserId || challenge.created_by;
-  const participant = challenge.participants?.find((p) => p.uid === targetUid);
-  const participantProgress = participant?.topic_progress || null;
 
   // Deep clone day_wise_allocation
   const updatedAllocation: Record<string, BoardCard[]> = {};
@@ -221,8 +208,7 @@ export function performMidnightRollover(
         const completedInTime = isTopicCompletedBeforeMidnight(
           topic.id,
           cutoffTime,
-          userProgressDoc,
-          participantProgress
+          userProgressDoc
         );
 
         if (!completedInTime) {

@@ -58,8 +58,11 @@ export const PeerSyllabusModal: React.FC<PeerSyllabusModalProps> = ({
   } else {
     completedTopics = participant.completed_topics || 0;
     scorePercent = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
-    topicProgressMap = participant.topic_progress || {};
-    lastActiveTimestamp = participant.last_completion_timestamp ?? null;
+    topicProgressMap = {};
+    lastActiveTimestamp =
+      ('earliest_completion_timestamp' in peer
+        ? (peer as { earliest_completion_timestamp?: number }).earliest_completion_timestamp
+        : null) ?? null;
   }
 
   const avatarImage =

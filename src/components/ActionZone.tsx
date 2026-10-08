@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Task } from '../types/dashboard';
 
 interface ActionZoneProps {
@@ -11,13 +11,24 @@ interface ActionZoneProps {
 
 export const ActionZone: React.FC<ActionZoneProps> = ({
   tasks,
-  currentTime,
+  currentTime: _currentTime,
   onToggleTheory,
   onTogglePractice,
   onOpenAddTopic,
 }) => {
   const [filter, setFilter] = useState<'all' | 'priority' | 'completed'>('all');
   const [subjectFilter, setSubjectFilter] = useState<string>('All');
+
+  // Derive distinct subjects actually present in tasks
+  const distinctSubjects = useMemo(() => {
+    const set = new Set<string>();
+    tasks.forEach((t) => {
+      if (t.subject && t.subject.trim()) {
+        set.add(t.subject.trim());
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [tasks]);
 
   // Filter tasks based on selected tab and subject dropdown
   const filteredTasks = tasks.filter((task) => {
@@ -102,13 +113,11 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
               className="text-xs bg-[#e5eeff] text-[#0b1c30] font-semibold py-1 px-2.5 rounded-xl border border-[#c0c9c0]/30 outline-none cursor-pointer focus:bg-white focus:border-[#003820] transition-colors"
             >
               <option value="All">All</option>
-              <option value="Physics">Physics</option>
-              <option value="Chemistry">Chemistry</option>
-              <option value="Biology">Biology</option>
-              <option value="Math">Math</option>
-              <option value="Bangla">Bangla</option>
-              <option value="English">English</option>
-              <option value="ICT">ICT</option>
+              {distinctSubjects.map((sub) => (
+                <option key={sub} value={sub}>
+                  {sub}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -164,9 +173,6 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
             const isInProgress =
               !isCompleted && (task.theoryCompleted || task.practiceCompleted);
 
-            // Compute how many hours ago it was generated
-            const hoursOld = Math.floor((currentTime - task.createdAt) / (1000 * 60 * 60));
-
             // RENDER LOCKED STATE UI
             if (task.isLocked) {
               return (
@@ -189,9 +195,6 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
                         <span className="text-[11px] text-[#707971] flex items-center gap-1 font-mono">
                           <span className="material-symbols-outlined text-xs">timer</span>{' '}
                           {task.durationMinutes} min
-                        </span>
-                        <span className="text-[10px] text-[#707971] font-mono">
-                          Generated {hoursOld}h ago
                         </span>
                       </div>
                       <h3 className="text-sm text-[#404942] font-semibold truncate">

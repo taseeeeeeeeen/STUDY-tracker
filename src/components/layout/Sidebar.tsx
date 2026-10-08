@@ -28,6 +28,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       badgeColor: 'bg-[#e5eeff] text-[#003820]',
     },
     {
+      to: '/strategy-planner',
+      label: 'Strategy Planner',
+      icon: 'insights',
+      badge: 'New',
+      badgeColor: 'bg-emerald-100 text-emerald-800',
+    },
+    {
       to: '/challenges',
       label: 'Challenge Wizard',
       icon: 'military_tech',
@@ -41,13 +48,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       badge: challenge.code,
       badgeColor: 'bg-amber-100 text-amber-900',
     },
-    {
-      to: '/admin-dashboard',
-      label: 'Admin Console',
-      icon: 'admin_panel_settings',
-      badge: isAdmin ? 'Admin' : 'Protected',
-      badgeColor: isAdmin ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-600',
-    },
+    ...(isAdmin
+      ? [
+          {
+            to: '/admin-dashboard',
+            label: 'Admin Console',
+            icon: 'admin_panel_settings',
+            badge: 'Admin',
+            badgeColor: 'bg-purple-100 text-purple-800',
+          },
+        ]
+      : []),
   ];
 
   return (

@@ -758,7 +758,7 @@ export const PeerArenaDashboard: React.FC<PeerArenaDashboardProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={onBackToDashboard}
+                  onClick={handleBack}
                   className="px-3 py-1 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] text-[#0b1c30] transition-colors cursor-pointer font-medium"
                 >
                   Back to Dashboard

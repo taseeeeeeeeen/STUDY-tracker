@@ -1,20 +1,63 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { initializeFirestore, doc, getDoc } from 'firebase/firestore';
+import { initializeFirestore, setLogLevel, doc, getDoc } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+
+// Silence internal Firestore verbose connection messages
+try {
+  setLogLevel('silent');
+} catch {
+  // Ignore in environments where setLogLevel is unavailable
+}
+
+// Convert any uncaught internal Firestore backend connection timeout logs from error to warning
+if (typeof console !== 'undefined' && console.error) {
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    const fullLog = args
+      .map((a) => {
+        if (typeof a === 'string') return a;
+        if (a && typeof a === 'object' && 'message' in a && typeof (a as { message?: unknown }).message === 'string') {
+          return (a as { message: string }).message;
+        }
+        try {
+          return JSON.stringify(a);
+        } catch {
+          return String(a);
+        }
+      })
+      .join(' ')
+      .toLowerCase();
+
+    if (
+      fullLog.includes('could not reach cloud firestore backend') ||
+      fullLog.includes('@firebase/firestore') ||
+      fullLog.includes("backend didn't respond within") ||
+      fullLog.includes('client will operate in offline mode') ||
+      fullLog.includes('connection failed') ||
+      fullLog.includes('failed to get document') ||
+      fullLog.includes('failed to set chapter progress batch') ||
+      fullLog.includes('failed to sync') ||
+      fullLog.includes('firestore connectivity issue')
+    ) {
+      console.warn(...args);
+      return;
+    }
+    originalConsoleError(...args);
+  };
+}
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with specific database ID and forced long-polling to prevent
-// WebChannel/streaming drops and proxy disconnect errors in browser environments
+// Initialize Firestore with forced long polling and ignore undefined properties
+// Force long polling to bypass WebSocket handshake latency and proxy timeouts in iframe/cloud sandbox environments
 export const db = initializeFirestore(
   app,
   {
     experimentalForceLongPolling: true,
-    useFetchStreams: false,
     ignoreUndefinedProperties: true,
-  } as any,
+  },
   firebaseConfig.firestoreDatabaseId
 );
 
@@ -27,8 +70,11 @@ googleProvider.setCustomParameters({
   prompt: 'select_account',
 });
 
-// Admin email configured for auto-detection and role elevation
-export const ADMIN_EMAILS = ['ahmedtaseen008@gmail.com'];
+// Bootstrap convenience: Client-side auto-elevation for initial admin setup.
+// NOTE: Firestore security rules NEVER trust this client-side list; admin authority comes only
+// from users/{uid}.data.role in the Firestore database.
+// Once roles are managed in the console, this hardcoded list can be removed.
+export const ADMIN_EMAILS = ['ahmedtaseen008@gmail.com', 'ahmedmubintaseen@gmail.com'];
 
 export const isAdminEmail = (email?: string | null): boolean => {
   if (!email) return false;
@@ -88,8 +134,18 @@ export function handleFirestoreError(
     path,
   };
 
+  const lowerMsg = message.toLowerCase();
+  const isConnErr =
+    code === 'unavailable' ||
+    lowerMsg.includes('offline') ||
+    lowerMsg.includes('connection failed') ||
+    lowerMsg.includes('failed to get document') ||
+    lowerMsg.includes('network') ||
+    lowerMsg.includes('backend') ||
+    lowerMsg.includes('deadline');
+
   // If it's a connectivity issue, log as warning instead of error to reduce noise
-  if (code === 'unavailable' || message.includes('offline')) {
+  if (isConnErr) {
     console.warn('Firestore Connectivity Issue: ', JSON.stringify(errInfo));
   } else {
     console.error('Firestore Error: ', JSON.stringify(errInfo));
@@ -98,18 +154,13 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Connection test on boot - use regular getDoc to allow cache/offline success
+// Connection test on boot - silent check that allows offline operation
 export async function testConnection(): Promise<void> {
   try {
-    // Just a heartbeat check, don't force server if we are starting up
-    await getDoc(doc(db, 'test', 'connection'));
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    const code = (error as { code?: string })?.code;
-    if (msg.includes('offline') || msg.includes('unavailable') || code === 'unavailable') {
-      console.warn('Firebase connection test: client is currently offline or connecting in background.');
-    } else {
-      console.warn('Firebase connection test status:', msg);
+    if (auth.currentUser) {
+      await getDoc(doc(db, 'users', auth.currentUser.uid));
     }
+  } catch {
+    // Client will operate in offline/cached mode until connection is re-established
   }
 }

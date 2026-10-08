@@ -11,11 +11,14 @@ import {
   X,
 } from 'lucide-react';
 import { Sidebar } from './Sidebar';
+import { Footer } from './Footer';
 import { useStudyTrack } from '../../context/StudyTrackContext';
 import { useAuth } from '../../context/AuthContext';
 import { QuickLogModal } from '../QuickLogModal';
 import { StudyModeModal } from '../StudyModeModal';
 import { ScrollToTopButton } from '../ScrollToTopButton';
+import { CookieConsentBanner } from '../common/CookieConsentBanner';
+import { addQuickStudyLog } from '../../services/userProgressService';
 
 export const AppLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -30,6 +33,7 @@ export const AppLayout: React.FC = () => {
     tasks,
     toggleDashboardTheory,
     toggleDashboardPractice,
+    triggerToast,
   } = useStudyTrack();
 
   const { user, isAdmin, logout } = useAuth();
@@ -49,6 +53,16 @@ export const AppLayout: React.FC = () => {
         return 'Peer Arena • Study Group';
       case '/admin-dashboard':
         return 'Admin Console • User Management';
+      case '/privacy':
+        return 'Legal • Privacy Policy';
+      case '/terms':
+        return 'Legal • Terms & Conditions';
+      case '/cookies':
+        return 'Legal • Cookie Policy';
+      case '/about':
+        return 'Company • About StudyTrack';
+      case '/contact':
+        return 'Support • Contact Us';
       default:
         return 'Dashboard • Today\'s Plan';
     }
@@ -235,31 +249,33 @@ export const AppLayout: React.FC = () => {
         </header>
 
         {/* Dynamic Nested Route Content */}
-        <div className="flex-1">
+        <main role="main" className="flex-1">
           <Outlet />
-        </div>
+        </main>
 
         <ScrollToTopButton />
 
-        {/* Global Footer */}
-        <footer className="w-full bg-white border-t border-[#c0c9c0]/30 py-6 mt-12">
-          <div className="max-w-[1440px] mx-auto px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#404942]">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-[#003820] text-sm">StudyTrack</span>
-              <span>— HSC Study Tracker</span>
-            </div>
-            <p className="text-[11px] text-[#707971]">
-              © 2026 StudyTrack. Built for HSC Students.
-            </p>
-          </div>
-        </footer>
+        {/* Global Organized Footer */}
+        <Footer />
       </div>
+
+      {/* Dismissible Cookie Consent Banner */}
+      <CookieConsentBanner />
 
       {/* Global Modals */}
       <QuickLogModal
         isOpen={isQuickLogOpen}
         onClose={() => setIsQuickLogOpen(false)}
-        onLogCompleted={(msg) => alert(msg)}
+        onLogCompleted={async (entry) => {
+          if (user?.uid) {
+            try {
+              await addQuickStudyLog(user.uid, entry);
+            } catch (err) {
+              console.warn('Could not persist quick study log to Firestore:', err);
+            }
+          }
+          triggerToast(`Logged ${entry.minutes}m of ${entry.subject}!`);
+        }}
       />
 
       <StudyModeModal

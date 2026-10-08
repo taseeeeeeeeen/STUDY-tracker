@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { HSCProgressSummary } from '../../types/hsc';
 
 interface HSCHeroDonutsProps {
@@ -6,6 +7,9 @@ interface HSCHeroDonutsProps {
 }
 
 export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
+  const [isSimModalOpen, setIsSimModalOpen] = useState(false);
+  const navigate = useNavigate();
+
   const {
     grandProgressPercent,
     overallTheoryPercent,
@@ -319,9 +323,6 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
             <span className="text-4xl font-extrabold tracking-tight">
               Grade {grade}
             </span>
-            <span className="text-xs text-white/90 mt-1">
-              {(85 + (grandProgressPercent / 100) * 14).toFixed(1)}th Percentile
-            </span>
           </div>
           <div className="relative z-10 text-right">
             <span className="material-symbols-outlined text-4xl text-[#6ffbbe]">
@@ -342,6 +343,7 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
         <div className="pt-4 mt-2">
           <button
             type="button"
+            onClick={() => setIsSimModalOpen(true)}
             className="w-full bg-[#eff4ff] hover:bg-[#e5eeff] text-[#003820] text-xs font-semibold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-colors border border-[#c0c9c0]/30 cursor-pointer"
           >
             <span>Simulate Dhaka Board Exam</span>
@@ -349,6 +351,101 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
           </button>
         </div>
       </div>
+
+      {/* Dhaka Board Exam Simulation Modal */}
+      {isSimModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-[#c0c9c0]/40 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#e5eeff]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#003820] text-[#6ffbbe] flex items-center justify-center">
+                  <span className="material-symbols-outlined text-lg">school</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#0b1c30]">Dhaka Board Exam Simulation</h3>
+                  <p className="text-[11px] text-[#404942]">HSC Standard Examination Readiness Model</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsSimModalOpen(false)}
+                className="p-1 rounded-lg text-[#707971] hover:text-[#0b1c30] hover:bg-[#eff4ff] cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-xl">close</span>
+              </button>
+            </div>
+
+            {/* Projected Score Overview */}
+            <div className="p-4 rounded-xl bg-[#003820] text-white flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-[#95d4ac] uppercase font-mono font-semibold">Predicted Outcome</span>
+                <div className="text-2xl font-extrabold mt-0.5">Grade {grade} ({gpa.toFixed(2)} GPA)</div>
+                <div className="text-xs text-white/80 mt-0.5">
+                  Est. Overall Marks: {Math.round(grandProgressPercent)}%
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold font-mono text-[#6ffbbe]">
+                  {Math.round(grandProgressPercent)}%
+                </div>
+                <div className="text-[10px] text-[#6ffbbe]/80 uppercase font-mono">Curriculum Done</div>
+              </div>
+            </div>
+
+            {/* Sub-components breakdown */}
+            <div className="space-y-2.5 text-xs">
+              <div className="bg-[#eff4ff] p-3 rounded-xl border border-[#c0c9c0]/30 flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-[#0b1c30]">Theory Knowledge (Textbook Concepts)</div>
+                  <div className="text-[11px] text-[#404942]">{completedTheoryCount} of {totalTopics} topics studied</div>
+                </div>
+                <span className="font-mono font-bold text-[#003820]">{Math.round(overallTheoryPercent)}%</span>
+              </div>
+
+              <div className="bg-[#eff4ff] p-3 rounded-xl border border-[#c0c9c0]/30 flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-[#0b1c30]">MCQ Section (30 Marks Weight)</div>
+                  <div className="text-[11px] text-[#404942]">{completedMCQs.toLocaleString()} of {totalMCQs.toLocaleString()} questions solved</div>
+                </div>
+                <span className="font-mono font-bold text-[#006c49]">
+                  {totalMCQs > 0 ? ((completedMCQs / totalMCQs) * 100).toFixed(1) : '0.0'}%
+                </span>
+              </div>
+
+              <div className="bg-[#eff4ff] p-3 rounded-xl border border-[#c0c9c0]/30 flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-[#0b1c30]">CQ Section (70 Marks Weight)</div>
+                  <div className="text-[11px] text-[#404942]">{completedCQs} of {totalCQs} creative sets solved</div>
+                </div>
+                <span className="font-mono font-bold text-[#0a503d]">
+                  {totalCQs > 0 ? ((completedCQs / totalCQs) * 100).toFixed(1) : '0.0'}%
+                </span>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e5eeff]">
+              <button
+                type="button"
+                onClick={() => setIsSimModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#404942] hover:bg-[#eff4ff] cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSimModalOpen(false);
+                  navigate('/challenges');
+                }}
+                className="px-4 py-2 bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Plan Study Sprint</span>
+                <span className="material-symbols-outlined text-sm">arrow_forward</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
