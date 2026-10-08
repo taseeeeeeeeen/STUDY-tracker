@@ -40,4 +40,7 @@ export interface ActiveSprint {
   daysCompleted: number;
   totalDays: number;
   rewardBadge: string;
+  topicProgressPercent: number;
+  completedTopics: number;
+  totalTopics: number;
 }

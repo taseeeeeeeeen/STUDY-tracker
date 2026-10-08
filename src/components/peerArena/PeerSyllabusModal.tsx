@@ -247,10 +247,7 @@ export const PeerSyllabusModal: React.FC<PeerSyllabusModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 bg-[#f8f9ff] border-t border-[#e5eeff] flex items-center justify-between text-xs">
-          <span className="text-[#707971] text-[11px]">
-            Real-time peer progress dynamically synced via Google Cloud Firestore.
-          </span>
+        <div className="p-4 bg-[#f8f9ff] border-t border-[#e5eeff] flex justify-end text-xs">
           <button
             onClick={onClose}
             className="px-5 py-2 rounded-xl bg-[#003820] text-white font-bold text-xs hover:bg-[#004e2d] transition-colors cursor-pointer"

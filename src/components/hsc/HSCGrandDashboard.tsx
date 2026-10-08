@@ -123,23 +123,14 @@ export const HSCGrandDashboard: React.FC = () => {
       {/* Main Viewport Container */}
       <main className="w-full flex-1">
         <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-8 py-8 flex flex-col gap-8">
-          {/* Synchronized State Banner */}
-          <div className="p-3 bg-[#eff4ff] text-[#0b1c30] rounded-xl shadow-xs text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-[#c0c9c0]/40">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm text-[#006c49]">
-                cloud_sync
-              </span>
-              <span>
-                <strong>Syllabus Sync:</strong> Progress updated in the dashboard or in the syllabus list below updates your overall progress automatically.
-              </span>
-            </div>
-
+          {/* Back to Dashboard Link */}
+          <div className="flex justify-start">
             <Link
               to="/"
-              className="text-[#003820] hover:underline font-semibold flex items-center gap-1 shrink-0"
+              className="text-[#003820] hover:underline font-semibold flex items-center gap-1 shrink-0 text-xs bg-white py-1.5 px-3 rounded-lg border border-[#c0c9c0]/30 shadow-xs"
             >
+              <span className="material-symbols-outlined text-sm">arrow_back</span>
               <span>Back to Dashboard</span>
-              <span className="material-symbols-outlined text-xs">arrow_forward</span>
             </Link>
           </div>
 

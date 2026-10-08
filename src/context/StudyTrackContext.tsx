@@ -409,8 +409,8 @@ function getTopicAllocatedDayMap(
             theoryCompleted: Boolean(prog.theory),
             practiceCompleted: Boolean(prog.practice),
             createdAt: taskCreatedAt,
-            isLocked: taskExpired && !isCompleted,
-            lockReason: taskExpired
+            isLocked: !Boolean(top.isCarriedOver) && taskExpired && !isCompleted,
+            lockReason: !Boolean(top.isCarriedOver) && taskExpired
               ? (top.lockReason || 'Locked: 24-hour study completion window expired')
               : undefined,
             isCarriedOver: Boolean(top.isCarriedOver),
@@ -576,8 +576,8 @@ function getTopicAllocatedDayMap(
         const is24hExpired = taskCreatedAt > 0 && (currentTime - taskCreatedAt >= 24 * 60 * 60 * 1000);
         const hasExpired = (!isNaN(cutoffMs) && currentTime > cutoffMs) || is24hExpired;
 
-        const nextLocked = hasExpired && !isCompleted;
-        const nextLockReason = hasExpired
+        const nextLocked = !task.isCarriedOver && hasExpired && !isCompleted;
+        const nextLockReason = (!task.isCarriedOver && hasExpired)
           ? (task.lockReason || 'Locked: 24-hour study completion window expired')
           : undefined;
 
@@ -1261,8 +1261,8 @@ function getTopicAllocatedDayMap(
 
   // Real Active Sprint state computed from active challenge
   const sprint: ActiveSprint = useMemo(() => {
-    return computeSprint(activeChallenge, Date.now());
-  }, [activeChallenge]);
+    return computeSprint(activeChallenge, Date.now(), user?.uid);
+  }, [activeChallenge, user?.uid]);
 
   // Real Weekly Backlog computed from remaining challenge tasks
   const backlog: WeeklyBacklog = useMemo(() => {
@@ -1439,16 +1439,16 @@ function getTopicAllocatedDayMap(
   // Active Challenge representation
   const challenge: ActiveSprintChallenge = useMemo(() => {
     const targetChallenge = roomChallenge;
-    const targetSprint = targetChallenge === activeChallenge ? sprint : computeSprint(targetChallenge, Date.now());
+    const targetSprint = targetChallenge === activeChallenge ? sprint : computeSprint(targetChallenge, Date.now(), user?.uid);
     return {
-      title: targetChallenge ? `${targetChallenge.duration}-Day Sprint Challenge` : 'No Active Sprint',
+      title: targetChallenge ? (targetChallenge.challenge_name?.trim() || `${targetChallenge.duration}-Day Sprint Challenge`) : 'No Active Sprint',
       cohortName: targetChallenge ? `Room ${targetChallenge.code}` : 'None',
       code: targetChallenge?.code || '',
       totalTopics: targetChallenge?.selected_syllabus?.length || 0,
       activePeersCount: targetChallenge?.participants?.length || 0,
       timeRemainingStr: targetChallenge ? `${targetSprint.daysLeft} Days Left` : 'N/A',
     };
-  }, [roomChallenge, activeChallenge, sprint]);
+  }, [roomChallenge, activeChallenge, sprint, user?.uid]);
 
   // Reset active challenge (wipe personal DB progress for sprint scope)
   const resettingRef = useRef(false);

@@ -180,7 +180,7 @@ export const LoginPage: React.FC = () => {
                 check_circle
               </span>
               <div>
-                <span className="font-bold text-[11px] block text-[#0b1c30]">Automatic Sync</span>
+                <span className="font-bold text-[11px] block text-[#0b1c30]">Automatic Save</span>
                 <span className="text-[10px] text-[#707971]">Saved across all devices</span>
               </div>
             </div>

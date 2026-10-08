@@ -82,7 +82,8 @@ export function computeBacklog(
  */
 export function computeSprint(
   activeChallenge: FirestoreChallenge | null,
-  nowMs: number
+  nowMs: number,
+  userId?: string
 ): ActiveSprint {
   if (!activeChallenge) {
     return {
@@ -92,6 +93,9 @@ export function computeSprint(
       daysCompleted: 0,
       totalDays: 7,
       rewardBadge: 'Launch in Challenge Wizard',
+      topicProgressPercent: 0,
+      completedTopics: 0,
+      totalTopics: 0,
     };
   }
   const startDate = new Date(activeChallenge.start_date).getTime();
@@ -100,13 +104,36 @@ export function computeSprint(
   const daysCompleted = Math.min(totalDays, elapsedDays);
   const daysLeft = Math.max(0, totalDays - daysCompleted);
 
+  const customName = activeChallenge.challenge_name?.trim() || `${totalDays}-Day Study Sprint`;
+
+  // Find participant matching userId or fallback to challenge's created_by
+  let participant = activeChallenge.participants.find((p) => p.uid === userId);
+  if (!participant && activeChallenge.created_by) {
+    participant = activeChallenge.participants.find((p) => p.uid === activeChallenge.created_by);
+  }
+
+  let completedTopics = 0;
+  let totalTopics = 0;
+  let topicProgressPercent = 0;
+
+  if (participant) {
+    completedTopics = participant.completed_topics || 0;
+    totalTopics = participant.total_challenge_topics || 0;
+    if (totalTopics > 0) {
+      topicProgressPercent = (completedTopics / totalTopics) * 100;
+    }
+  }
+
   return {
-    name: `${totalDays}-Day Study Sprint`,
+    name: customName,
     phase: daysLeft === 0 ? 'Sprint Completed' : `Day ${daysCompleted + 1} of ${totalDays}`,
     daysLeft,
     daysCompleted,
     totalDays,
     rewardBadge: daysLeft === 0 ? '🏆 Sprint Completed!' : 'Mastery Badge at finish',
+    topicProgressPercent,
+    completedTopics,
+    totalTopics,
   };
 }
 

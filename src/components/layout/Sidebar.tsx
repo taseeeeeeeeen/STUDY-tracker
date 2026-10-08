@@ -158,17 +158,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
         {/* Bottom Section: Global Sync Indicator & Profile */}
         <div className="p-4 space-y-3 border-t border-[#e5eeff]">
-          {/* Real-time State Synchronization Pill */}
-          <div className="p-3 bg-[#eff4ff] rounded-xl border border-[#c0c9c0]/30 text-xs flex flex-col gap-1">
-            <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#006c49] uppercase tracking-wide font-mono">
-              <span className="w-2 h-2 rounded-full bg-[#006c49] animate-pulse" />
-              <span>Cloud Sync Active</span>
-            </div>
-            <p className="text-[11px] text-[#404942] leading-tight">
-              Your study progress is automatically synced in real time.
-            </p>
-          </div>
-
           {/* User Profile Pill & Sign Out */}
           {user ? (
             <div className="p-2.5 rounded-2xl bg-white border border-[#c0c9c0]/40 shadow-xs space-y-2">

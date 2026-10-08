@@ -26,10 +26,7 @@ export const Footer: React.FC = () => {
             <p className="text-[11px] text-[#707971] leading-relaxed">
               Designed specifically for Higher Secondary Certificate (HSC) students to master complex syllabi, pace custom study sprints, and collaborate with peer study groups.
             </p>
-            <div className="flex items-center gap-1.5 text-[10px] text-[#006c49] font-mono font-semibold pt-1">
-              <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
-              <span>All Systems Operational • Real-time Cloud Sync</span>
-            </div>
+            {/* Status indicators removed */}
           </div>
 
           {/* Column 2: Quick Links */}

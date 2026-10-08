@@ -53,7 +53,7 @@ export const AboutPage: React.FC = () => {
           </div>
           <h3 className="font-bold text-[#003820]">Complete HSC Syllabus</h3>
           <p className="text-[#404942] text-xs leading-relaxed">
-            Direct real-time synchronization with official master syllabus trees across Physics, Chemistry, Higher Math, Biology, and ICT.
+            Complete syllabus coverage across Physics, Chemistry, Higher Math, Biology, and ICT.
           </p>
         </div>
 

@@ -47,6 +47,18 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
   const timeFormatted = `${hours > 0 ? `${hours}h ` : ''}${mins}m`;
   const capacityPercent = Math.min(100, Math.round((totalMinutes / column.capacityMinutes) * 100));
 
+  // Sort cards if it's the current day (TODAY) to show carried-over chapter cards first
+  const sortedCards = React.useMemo(() => {
+    if (!isToday) return cards;
+    return [...cards].sort((a, b) => {
+      const aCarried = Boolean(a.isCarriedOver || a.topics?.some((t) => t.isCarriedOver));
+      const bCarried = Boolean(b.isCarriedOver || b.topics?.some((t) => t.isCarriedOver));
+      const aVal = aCarried ? 1 : 0;
+      const bVal = bCarried ? 1 : 0;
+      return bVal - aVal;
+    });
+  }, [cards, isToday]);
+
   return (
     <div className="flex-1 flex flex-col gap-2 min-w-[210px] max-w-[240px]">
       {/* Column Header Card */}
@@ -128,7 +140,7 @@ export const DroppableDayColumn: React.FC<DroppableDayColumnProps> = ({
         )}
 
         {/* Render Cards */}
-        {cards.map((card, idx) => (
+        {sortedCards.map((card, idx) => (
           <DraggableTopicCard
             key={`${card.id}-day-${card.dayNumber || column.dayNumber}-${idx}`}
             card={card}

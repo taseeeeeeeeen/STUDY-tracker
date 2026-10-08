@@ -13,7 +13,31 @@ interface DayState {
   placedTopics: SyllabusItem[];
   placedSubjects: Set<string>;
   placedChapters: Set<string>;
+  chapterMinutes: Map<string, number>;
   lastSubject?: string;
+}
+
+function canAddTopicToDay(day: DayState, topic: SyllabusItem, respectCapacity: boolean): boolean {
+  const dur = topic.durationMinutes || 45;
+  const chId = topic.chapterId || topic.chapterName || topic.subject;
+  const currentChMins = day.chapterMinutes.get(chId) || 0;
+  
+  // Rule B: Chapter daily cap of 180 minutes
+  if (currentChMins + dur > 180) {
+    return false;
+  }
+
+  // Rule R2: Day capacity
+  if (respectCapacity && dur > day.remainingCapacity) {
+    return false;
+  }
+
+  // Rule A: Daily subject limit (max 3 subjects)
+  if (!day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3) {
+    return false;
+  }
+
+  return true;
 }
 
 export function buildStrategicRoutine(options: {
@@ -59,6 +83,7 @@ export function buildStrategicRoutine(options: {
       placedTopics: [],
       placedSubjects: new Set<string>(),
       placedChapters: new Set<string>(),
+      chapterMinutes: new Map<string, number>(),
     };
   }
 
@@ -90,9 +115,12 @@ export function buildStrategicRoutine(options: {
       // Rule check: must not have been placed on Day d yet
       if (lastPlacedDay[bucket.chapterId] >= d) continue;
 
-      // Rule check: first topic must fit in Day d's remaining capacity
-      const firstTopicDur = bucket.topics[0].durationMinutes || 45;
-      if (firstTopicDur > day.remainingCapacity) continue;
+      // Rule A check: Day may contain AT MOST 3 distinct subjects
+      const isEligibleSubject = day.placedSubjects.has(bucket.subject) || day.placedSubjects.size < 3;
+      if (!isEligibleSubject) continue;
+
+      // Rule check: first topic must fit and respect all rules
+      if (!canAddTopicToDay(day, bucket.topics[0], true)) continue;
 
       // Evaluate preference score for soft constraints (R3, R4)
       const isNewSubjectOnDay = !day.placedSubjects.has(bucket.subject); // R3
@@ -129,13 +157,18 @@ export function buildStrategicRoutine(options: {
 
       for (const topic of bucket.topics) {
         const dur = topic.durationMinutes || 45;
-        // Chapter daily cap (R1: 180 min) and Day capacity (R2)
-        if (chunkDuration + dur <= 180 && chunkDuration + dur <= day.remainingCapacity) {
-          chunk.push(topic);
-          chunkDuration += dur;
-        } else {
-          break;
-        }
+        const chId = topic.chapterId || topic.chapterName || topic.subject;
+        const currentChMins = (day.chapterMinutes.get(chId) || 0) + chunkDuration;
+
+        // Rule B: Chapter daily cap (180 min)
+        if (currentChMins + dur > 180) break;
+        // Rule R2: Day capacity
+        if (dur > day.remainingCapacity - chunkDuration) break;
+        // Rule A: Daily subject limit
+        if (!day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3) break;
+
+        chunk.push(topic);
+        chunkDuration += dur;
       }
 
       if (chunk.length > 0) {
@@ -145,6 +178,9 @@ export function buildStrategicRoutine(options: {
         day.placedSubjects.add(bucket.subject);
         day.placedChapters.add(bucket.chapterId);
         day.lastSubject = bucket.subject;
+
+        const currentMins = day.chapterMinutes.get(bucket.chapterId) || 0;
+        day.chapterMinutes.set(bucket.chapterId, currentMins + chunkDuration);
 
         // Remove placed topics from the bucket
         bucket.topics = bucket.topics.slice(chunk.length);
@@ -183,16 +219,21 @@ export function buildStrategicRoutine(options: {
     let placed = false;
     let attempts = 0;
 
+    // First pass: try to place topic where it fits capacity AND respects Rule A and Rule B
     while (!placed && attempts < numDays) {
       const day = dayStates[currentDayForLeftover];
-      const dur = topic.durationMinutes || 45;
-
-      if (dur <= day.remainingCapacity) {
+      if (canAddTopicToDay(day, topic, true)) {
+        const dur = topic.durationMinutes || 45;
         day.placedTopics.push(topic);
         day.remainingCapacity -= dur;
         day.placedSubjects.add(topic.subject);
         day.placedChapters.add(topic.chapterId || topic.chapterName || topic.subject);
         day.lastSubject = topic.subject;
+
+        const chId = topic.chapterId || topic.chapterName || topic.subject;
+        const currentMins = day.chapterMinutes.get(chId) || 0;
+        day.chapterMinutes.set(chId, currentMins + dur);
+
         placed = true;
         currentDayForLeftover = (currentDayForLeftover % numDays) + 1;
       } else {
@@ -201,16 +242,74 @@ export function buildStrategicRoutine(options: {
       }
     }
 
-    // Force place if still not placed (no capacity left on any day)
+    // Second pass: force-place by ignoring capacity, but still respecting Rule A (subjects <= 3) and Rule B (chapter cap <= 180)
     if (!placed) {
-      const day = dayStates[currentDayForLeftover];
+      let bestDay: DayState | null = null;
+      for (let d = 1; d <= numDays; d++) {
+        const day = dayStates[d];
+        if (canAddTopicToDay(day, topic, false)) {
+          if (!bestDay) {
+            bestDay = day;
+          } else {
+            const countBest = bestDay.placedSubjects.size;
+            const countCurr = day.placedSubjects.size;
+            if (countCurr < countBest) {
+              bestDay = day;
+            } else if (countCurr === countBest) {
+              const workloadBest = dailyCapacityMinutes - bestDay.remainingCapacity;
+              const workloadCurr = dailyCapacityMinutes - day.remainingCapacity;
+              if (workloadCurr < workloadBest) {
+                bestDay = day;
+              }
+            }
+          }
+        }
+      }
+
+      // If no day found respecting both, fallback to just respecting subjects <= 3 (hard invariant)
+      if (!bestDay) {
+        for (let d = 1; d <= numDays; d++) {
+          const day = dayStates[d];
+          const hasSubjectOrFreeSlot = day.placedSubjects.has(topic.subject) || day.placedSubjects.size < 3;
+          if (hasSubjectOrFreeSlot) {
+            if (!bestDay) {
+              bestDay = day;
+            } else {
+              const countBest = bestDay.placedSubjects.size;
+              const countCurr = day.placedSubjects.size;
+              if (countCurr < countBest) {
+                bestDay = day;
+              } else if (countCurr === countBest) {
+                const workloadBest = dailyCapacityMinutes - bestDay.remainingCapacity;
+                const workloadCurr = dailyCapacityMinutes - day.remainingCapacity;
+                if (workloadCurr < workloadBest) {
+                  bestDay = day;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // If still no day found (which is theoretically impossible unless numDays is 0 or all days have 3 different subjects none of which is topic.subject),
+      // we fallback to the currentDayForLeftover day as absolute last resort
+      if (!bestDay) {
+        bestDay = dayStates[currentDayForLeftover];
+      }
+
       const dur = topic.durationMinutes || 45;
-      day.placedTopics.push(topic);
-      day.remainingCapacity -= dur; // goes negative, indicating overflow
-      day.placedSubjects.add(topic.subject);
-      day.placedChapters.add(topic.chapterId || topic.chapterName || topic.subject);
-      day.lastSubject = topic.subject;
-      currentDayForLeftover = (currentDayForLeftover % numDays) + 1;
+      bestDay.placedTopics.push(topic);
+      bestDay.remainingCapacity -= dur;
+      bestDay.placedSubjects.add(topic.subject);
+      bestDay.placedChapters.add(topic.chapterId || topic.chapterName || topic.subject);
+      bestDay.lastSubject = topic.subject;
+      
+      const chId = topic.chapterId || topic.chapterName || topic.subject;
+      const currentMins = bestDay.chapterMinutes.get(chId) || 0;
+      bestDay.chapterMinutes.set(chId, currentMins + dur);
+      
+      placed = true;
+      currentDayForLeftover = (bestDay.dayNumber % numDays) + 1;
     }
   }
 

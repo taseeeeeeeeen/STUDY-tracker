@@ -30,19 +30,28 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [tasks]);
 
-  // Filter tasks based on selected tab and subject dropdown
-  const filteredTasks = tasks.filter((task) => {
-    if (subjectFilter !== 'All' && task.subject.toLowerCase() !== subjectFilter.toLowerCase()) {
-      return false;
-    }
-    const isCompleted = task.theoryCompleted && task.practiceCompleted;
-    if (filter === 'all') return true;
-    if (filter === 'completed') return isCompleted;
-    if (filter === 'priority') {
-      return task.isPriority || (task.theoryCompleted && !task.practiceCompleted);
-    }
-    return true;
-  });
+  // Filter tasks based on selected tab and subject dropdown and sort backlog first
+  const filteredTasks = useMemo(() => {
+    const filtered = tasks.filter((task) => {
+      if (subjectFilter !== 'All' && task.subject.toLowerCase() !== subjectFilter.toLowerCase()) {
+        return false;
+      }
+      const isCompleted = task.theoryCompleted && task.practiceCompleted;
+      if (filter === 'all') return true;
+      if (filter === 'completed') return isCompleted;
+      if (filter === 'priority') {
+        return task.isPriority || (task.theoryCompleted && !task.practiceCompleted);
+      }
+      return true;
+    });
+
+    // Stable sort: task.isCarriedOver tasks first
+    return [...filtered].sort((a, b) => {
+      const aVal = a.isCarriedOver ? 1 : 0;
+      const bVal = b.isCarriedOver ? 1 : 0;
+      return bVal - aVal;
+    });
+  }, [tasks, filter, subjectFilter]);
 
   const subjectTasks = subjectFilter === 'All'
     ? tasks
@@ -274,7 +283,7 @@ export const ActionZone: React.FC<ActionZoneProps> = ({
                       {task.isCarriedOver && (
                         <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-300 text-[11px] font-semibold flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse" />
-                          Carried Over {task.carriedOverFromDay ? `(Day ${task.carriedOverFromDay})` : ''}
+                          Backlog {task.carriedOverFromDay ? `(from Day ${task.carriedOverFromDay})` : ''}
                         </span>
                       )}
 

@@ -162,7 +162,14 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
     }
   };
 
-  const topicsList = card.topics || [];
+  const topicsList = React.useMemo(() => {
+    const list = card.topics || [];
+    return [...list].sort((a, b) => {
+      const aVal = a.isCarriedOver ? 1 : 0;
+      const bVal = b.isCarriedOver ? 1 : 0;
+      return bVal - aVal;
+    });
+  }, [card.topics]);
   const topicCount = topicsList.length > 0 ? topicsList.length : 1;
   const isCardCarriedOver = Boolean(card.isCarriedOver || topicsList.some((t) => t.isCarriedOver));
 
@@ -203,7 +210,7 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
           {isCardCarriedOver && (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse" />
-              Carried Over {card.carriedOverFromDay ? `(Day ${card.carriedOverFromDay})` : ''}
+              Backlog {card.carriedOverFromDay ? `(from Day ${card.carriedOverFromDay})` : ''}
             </span>
           )}
         </div>

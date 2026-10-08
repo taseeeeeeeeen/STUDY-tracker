@@ -190,7 +190,7 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
         {loading ? (
           <div className="py-12 flex flex-col items-center justify-center gap-2 text-[#707971] text-xs">
             <div className="w-6 h-6 border-2 border-[#003820] border-t-transparent rounded-full animate-spin" />
-            <span>Loading syllabus from database...</span>
+            <span>Loading syllabus...</span>
           </div>
         ) : visibleSubjects.length === 0 ? (
           <div className="py-8 text-center space-y-3 bg-[#f8f9ff] rounded-xl border border-[#c0c9c0]/30 p-6">
@@ -202,7 +202,7 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
               <p className="text-xs text-[#707971] mt-0.5">
                 {masterSubjects.length > 0
                   ? 'All subjects are currently hidden. You can unhide them in the HSC Syllabus view.'
-                  : 'The master syllabus is currently empty in the database.'}
+                  : 'The master syllabus is currently empty.'}
               </p>
             </div>
             <button

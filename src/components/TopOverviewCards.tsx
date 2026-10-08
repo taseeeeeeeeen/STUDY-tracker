@@ -233,15 +233,15 @@ export const TopOverviewCards: React.FC<TopOverviewCardsProps> = ({
 
         <div className="space-y-2 mt-3">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[#404942]">Progress</span>
+            <span className="text-[#404942]">Preparation</span>
             <span className="font-bold text-[#003820] tabular-nums">
-              {Math.round((sprint.daysCompleted / sprint.totalDays) * 100)}% ({sprint.daysCompleted}/{sprint.totalDays} d)
+              {Math.round(sprint.topicProgressPercent)}% ({sprint.completedTopics}/{sprint.totalTopics} topics)
             </span>
           </div>
           <div className="w-full bg-[#e5eeff] h-2 rounded-full overflow-hidden">
             <div
               className="bg-[#003820] h-full rounded-full transition-all duration-700"
-              style={{ width: `${(sprint.daysCompleted / sprint.totalDays) * 100}%` }}
+              style={{ width: `${sprint.topicProgressPercent}%` }}
             />
           </div>
           <div className="flex items-center justify-between text-[#006c49] text-xs pt-1">

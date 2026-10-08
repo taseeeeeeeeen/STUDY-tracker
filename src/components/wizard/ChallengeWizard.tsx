@@ -2631,7 +2631,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
             {loadingSyllabus ? (
               <div className="p-12 text-center text-xs text-[#707971] bg-white rounded-2xl border border-[#c0c9c0]/30">
                 <div className="w-6 h-6 border-2 border-[#003820] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                Fetching official syllabus directly from Firestore /master_syllabus...
+                Loading syllabus...
               </div>
             ) : filteredMasterSubjects.length === 0 ? (
               <div className="p-8 bg-amber-50 rounded-2xl border border-amber-200 text-center space-y-3">
