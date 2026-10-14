@@ -5,7 +5,7 @@ interface FocusTimerProps {
 }
 
 export const FocusTimer: React.FC<FocusTimerProps> = ({
-  currentTopicTitle = 'Physics: Classical Mechanics',
+  currentTopicTitle = 'Focus Session',
 }) => {
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [isRunning, setIsRunning] = useState(false);

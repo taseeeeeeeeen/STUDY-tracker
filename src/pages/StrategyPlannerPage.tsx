@@ -162,6 +162,7 @@ export const StrategyPlannerPage: React.FC = () => {
           prepStartDate,
           examStartDate,
           durationDays,
+          dailyCapacityMinutes: capacityMinutes,
           dayWiseAllocation: dayWisePlan,
           selectedTopicIds: selectedTopics.map((t) => t.id),
         },

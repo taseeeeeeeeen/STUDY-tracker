@@ -24,6 +24,7 @@ import {
   updateChallengeSyllabus,
   archiveChallenge,
   deleteFirestoreChallenge,
+  syncParticipantCompletion,
 } from '../services/challengeService';
 import {
   dedupeSyllabusTopics,
@@ -86,6 +87,8 @@ interface StudyTrackContextType {
     rank: number;
   })[];
   memberProgressMap: Record<string, UserProgressDoc | null>;
+  userProgress: Record<string, UserTopicProgress>;
+  userProgressDoc: UserProgressDoc | null;
 
   // Action Dispatchers
   toggleDashboardTheory: (taskId: string) => Promise<void>;
@@ -112,6 +115,103 @@ interface StudyTrackContextType {
 const StudyTrackContext = createContext<StudyTrackContextType | undefined>(undefined);
 
 const getActiveChallengeStorageKey = (uid: string) => `studytrack_active_challenge_id_${uid}`;
+
+function getTopicAllocatedDayMap(
+  challenge: FirestoreChallenge | null | undefined
+): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!challenge || !challenge.day_wise_allocation) return map;
+
+  Object.entries(challenge.day_wise_allocation).forEach(([dayKey, cards]) => {
+    const match = dayKey.match(/Day\s+(\d+)/i);
+    const dayNum = match ? parseInt(match[1], 10) : parseInt(dayKey.replace(/\D/g, ''), 10);
+    if (!dayNum || isNaN(dayNum)) return;
+
+    if (Array.isArray(cards)) {
+      cards.forEach((card: any) => {
+        const cardDay = typeof card.dayNumber === 'number' && card.dayNumber > 0 ? card.dayNumber : dayNum;
+        if (card.id) {
+          const rawId = card.id;
+          const strippedId = card.id.replace(/^chapter-/, '');
+          map.set(rawId, Math.max(map.get(rawId) || 0, dayNum, cardDay));
+          map.set(strippedId, Math.max(map.get(strippedId) || 0, dayNum, cardDay));
+        }
+        if (card.chapterId) {
+          map.set(card.chapterId, Math.max(map.get(card.chapterId) || 0, dayNum, cardDay));
+        }
+        if (Array.isArray(card.topics)) {
+          card.topics.forEach((t: any) => {
+            if (t.id) {
+              const topicDay = typeof t.dayNumber === 'number' && t.dayNumber > 0 ? t.dayNumber : cardDay;
+              map.set(t.id, Math.max(map.get(t.id) || 0, dayNum, cardDay, topicDay));
+            }
+          });
+        }
+      });
+    }
+  });
+
+  return map;
+}
+
+/**
+ * Shared pure helper to compute task lock state deterministically.
+ */
+export function computeTaskLockState(params: {
+  topicId: string;
+  topicChapterId?: string;
+  hasOwnCreatedAt: boolean;
+  createdAt?: number;
+  isCarriedOver?: boolean;
+  isCompleted: boolean;
+  existingLockReason?: string;
+  allocatedDayMap: Map<string, number>;
+  startDate?: string | null;
+  duration?: number;
+  nowMs: number;
+}): { isLocked: boolean; lockReason?: string } {
+  const {
+    topicId,
+    topicChapterId,
+    hasOwnCreatedAt,
+    createdAt,
+    isCarriedOver,
+    isCompleted,
+    existingLockReason,
+    allocatedDayMap,
+    startDate,
+    duration,
+    nowMs,
+  } = params;
+
+  if (isCarriedOver || isCompleted) {
+    return { isLocked: false, lockReason: undefined };
+  }
+
+  let isExpired = false;
+
+  if (hasOwnCreatedAt && typeof createdAt === 'number' && createdAt > 0) {
+    isExpired = nowMs - createdAt >= 24 * 60 * 60 * 1000;
+  } else if (startDate) {
+    const allocatedDay =
+      allocatedDayMap.get(topicId) ||
+      (topicChapterId ? allocatedDayMap.get(topicChapterId) : undefined) ||
+      duration ||
+      7;
+    const cutoffMs = getMidnightEndOfDay(startDate, allocatedDay);
+    isExpired = !isNaN(cutoffMs) && nowMs > cutoffMs;
+  }
+
+  if (isExpired) {
+    return {
+      isLocked: true,
+      lockReason: existingLockReason || 'Locked: 24-hour study completion window expired',
+    };
+  }
+
+  return { isLocked: false, lockReason: undefined };
+}
+
 
 export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user } = useAuth();
@@ -285,41 +385,6 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
     setHscMasterSyllabus(convertMasterToHSC(visibleSubjects, userProgress));
   }, [globalMasterSyllabus, userProgress, hiddenSubjectIds]);
 
-function getTopicAllocatedDayMap(
-  challenge: FirestoreChallenge | null | undefined
-): Map<string, number> {
-  const map = new Map<string, number>();
-  if (!challenge || !challenge.day_wise_allocation) return map;
-
-  Object.entries(challenge.day_wise_allocation).forEach(([dayKey, cards]) => {
-    const match = dayKey.match(/Day\s+(\d+)/i);
-    const dayNum = match ? parseInt(match[1], 10) : parseInt(dayKey.replace(/\D/g, ''), 10);
-    if (!dayNum || isNaN(dayNum)) return;
-
-    if (Array.isArray(cards)) {
-      cards.forEach((card: any) => {
-        if (card.id) {
-          const rawId = card.id;
-          const strippedId = card.id.replace(/^chapter-/, '');
-          map.set(rawId, Math.max(map.get(rawId) || 0, dayNum));
-          map.set(strippedId, Math.max(map.get(strippedId) || 0, dayNum));
-        }
-        if (card.chapterId) {
-          map.set(card.chapterId, Math.max(map.get(card.chapterId) || 0, dayNum));
-        }
-        if (Array.isArray(card.topics)) {
-          card.topics.forEach((t: any) => {
-            if (t.id) {
-              map.set(t.id, Math.max(map.get(t.id) || 0, dayNum));
-            }
-          });
-        }
-      });
-    }
-  });
-
-  return map;
-}
 
   // Real-Time Firestore onSnapshot Listener for Active Challenge
   useEffect(() => {
@@ -343,9 +408,6 @@ function getTopicAllocatedDayMap(
         }
 
         setActiveChallengeState(challengeDoc);
-
-        // Map challenge topics & current user's personal progress into Main Dashboard tasks
-        const challengeCreatedAt = new Date(challengeDoc.start_date).getTime() || Date.now();
 
         // Apply dedupeSyllabusTopics before mapping
         const rawSyllabus = challengeDoc.selected_syllabus || [];
@@ -371,6 +433,7 @@ function getTopicAllocatedDayMap(
           : dedupedSyllabus;
 
         const allocatedDayMap = getTopicAllocatedDayMap(challengeDoc);
+        const now = Date.now();
 
         const mappedTasks: Task[] = targetTopics.map((top: any, idx: number) => {
           const prog = userProgressRef.current[top.id] || { theory: false, practice: false };
@@ -388,17 +451,23 @@ function getTopicAllocatedDayMap(
           else if (sLower.startsWith('eng') || sLower.includes('ইংরেজি')) sub = 'English';
           else if (sLower.startsWith('ict') || sLower.includes('তথ্য')) sub = 'ICT';
 
-          const allocatedDay =
-            allocatedDayMap.get(top.id) ||
-            (top.chapterId ? allocatedDayMap.get(top.chapterId) : undefined) ||
-            challengeDoc.duration ||
-            7;
-          const cutoffMs = getMidnightEndOfDay(challengeDoc.start_date, allocatedDay);
-          const isExpired = !isNaN(cutoffMs) && Date.now() > cutoffMs;
-          const taskCreatedAt = typeof top.createdAt === 'number' ? top.createdAt : challengeCreatedAt;
-          const is24hExpired = taskCreatedAt > 0 && (Date.now() - taskCreatedAt >= 24 * 60 * 60 * 1000);
-          const taskExpired = isExpired || is24hExpired;
+          const hasOwnCreatedAt = typeof top.createdAt === 'number' && top.createdAt > 0;
           const isCompleted = Boolean(prog.theory && prog.practice);
+          const isCarriedOver = Boolean(top.isCarriedOver);
+
+          const lockState = computeTaskLockState({
+            topicId: top.id,
+            topicChapterId: top.chapterId,
+            hasOwnCreatedAt,
+            createdAt: hasOwnCreatedAt ? top.createdAt : undefined,
+            isCarriedOver,
+            isCompleted,
+            existingLockReason: top.lockReason,
+            allocatedDayMap,
+            startDate: challengeDoc.start_date,
+            duration: challengeDoc.duration,
+            nowMs: now,
+          });
 
           return {
             id: top.id || `task-${idx + 1}`,
@@ -408,12 +477,10 @@ function getTopicAllocatedDayMap(
             durationMinutes: top.durationMinutes || 45,
             theoryCompleted: Boolean(prog.theory),
             practiceCompleted: Boolean(prog.practice),
-            createdAt: taskCreatedAt,
-            isLocked: !Boolean(top.isCarriedOver) && taskExpired && !isCompleted,
-            lockReason: !Boolean(top.isCarriedOver) && taskExpired
-              ? (top.lockReason || 'Locked: 24-hour study completion window expired')
-              : undefined,
-            isCarriedOver: Boolean(top.isCarriedOver),
+            createdAt: hasOwnCreatedAt ? top.createdAt : undefined,
+            isLocked: lockState.isLocked,
+            lockReason: lockState.lockReason,
+            isCarriedOver,
             carriedOverFromDay: top.carriedOverFromDay,
           };
         });
@@ -566,27 +633,28 @@ function getTopicAllocatedDayMap(
     setTasks((prevTasks) => {
       let hasChanges = false;
       const nextTasks = prevTasks.map((task) => {
-        const isCompleted = task.theoryCompleted && task.practiceCompleted;
-        const allocatedDay =
-          allocatedDayMap.get(task.id) ||
-          activeChallenge.duration ||
-          7;
-        const cutoffMs = getMidnightEndOfDay(activeChallenge.start_date, allocatedDay);
-        const taskCreatedAt = typeof task.createdAt === 'number' ? task.createdAt : 0;
-        const is24hExpired = taskCreatedAt > 0 && (currentTime - taskCreatedAt >= 24 * 60 * 60 * 1000);
-        const hasExpired = (!isNaN(cutoffMs) && currentTime > cutoffMs) || is24hExpired;
+        const isCompleted = Boolean(task.theoryCompleted && task.practiceCompleted);
+        const hasOwnCreatedAt = typeof task.createdAt === 'number' && task.createdAt > 0;
+        const lockState = computeTaskLockState({
+          topicId: task.id,
+          topicChapterId: (task as any).chapterId,
+          hasOwnCreatedAt,
+          createdAt: hasOwnCreatedAt ? task.createdAt : undefined,
+          isCarriedOver: Boolean(task.isCarriedOver),
+          isCompleted,
+          existingLockReason: task.lockReason,
+          allocatedDayMap,
+          startDate: activeChallenge.start_date,
+          duration: activeChallenge.duration,
+          nowMs: currentTime,
+        });
 
-        const nextLocked = !task.isCarriedOver && hasExpired && !isCompleted;
-        const nextLockReason = (!task.isCarriedOver && hasExpired)
-          ? (task.lockReason || 'Locked: 24-hour study completion window expired')
-          : undefined;
-
-        if (task.isLocked !== nextLocked || task.lockReason !== nextLockReason) {
+        if (task.isLocked !== lockState.isLocked || task.lockReason !== lockState.lockReason) {
           hasChanges = true;
           return {
             ...task,
-            isLocked: nextLocked,
-            lockReason: nextLockReason,
+            isLocked: lockState.isLocked,
+            lockReason: lockState.lockReason,
           };
         }
         return task;
@@ -681,6 +749,38 @@ function getTopicAllocatedDayMap(
     return { isLocked: false };
   };
 
+  const participantSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (participantSyncTimerRef.current) {
+        clearTimeout(participantSyncTimerRef.current);
+      }
+    };
+  }, []);
+
+  const scheduleParticipantSync = (topicIdOrIds: string | string[]) => {
+    if (!user || !activeChallenge) return;
+    const ids = Array.isArray(topicIdOrIds) ? topicIdOrIds : [topicIdOrIds];
+    const syllabusIds = new Set((activeChallenge.selected_syllabus || []).map((s) => s.id));
+    const concernsActiveChallenge = ids.some((id) => syllabusIds.has(id));
+    if (!concernsActiveChallenge) return;
+
+    if (participantSyncTimerRef.current) {
+      clearTimeout(participantSyncTimerRef.current);
+    }
+    const challengeId = activeChallenge.challenge_id;
+    const uid = user.uid;
+
+    participantSyncTimerRef.current = setTimeout(() => {
+      participantSyncTimerRef.current = null;
+      syncParticipantCompletion(challengeId, uid).catch((err) => {
+        console.warn('Failed to sync participant completion:', err);
+        triggerToast('Failed to update sprint challenge progress.');
+      });
+    }, 2000);
+  };
+
   // Instantly update Firestore document on Theory or Practice toggle
   const toggleDashboardTheory = async (taskId: string) => {
     if (!user || !activeChallenge) return;
@@ -730,6 +830,7 @@ function getTopicAllocatedDayMap(
 
     try {
       await currentPromise;
+      scheduleParticipantSync(taskId);
     } catch (err) {
       console.warn('Failed to sync theory toggle to Firestore:', err);
       // Rollback only if this operation is still the latest in-flight request
@@ -805,6 +906,7 @@ function getTopicAllocatedDayMap(
 
     try {
       await currentPromise;
+      scheduleParticipantSync(taskId);
     } catch (err) {
       console.warn('Failed to sync practice toggle to Firestore:', err);
       // Rollback only if this operation is still the latest in-flight request
@@ -861,6 +963,7 @@ function getTopicAllocatedDayMap(
 
     try {
       await toggleUserTopicProgress(user.uid, topicId, 'theory', intendedValue);
+      scheduleParticipantSync(topicId);
     } catch (err) {
       console.warn('Failed to toggle HSC theory:', err);
       // Functional rollback
@@ -906,6 +1009,7 @@ function getTopicAllocatedDayMap(
 
     try {
       await toggleUserTopicProgress(user.uid, topicId, 'practice', intendedValue);
+      scheduleParticipantSync(topicId);
     } catch (err) {
       console.warn('Failed to toggle HSC practice:', err);
       // Functional rollback
@@ -985,6 +1089,7 @@ function getTopicAllocatedDayMap(
 
     try {
       await setUserTopicProgressBatch(user.uid, batchUpdates);
+      scheduleParticipantSync(topicIds);
     } catch (err) {
       console.warn('Failed to set chapter progress batch:', err);
       // Functional rollback for only the specific topics touched by this call
@@ -1586,6 +1691,8 @@ function getTopicAllocatedDayMap(
         peers,
         sortedPeers,
         memberProgressMap,
+        userProgress,
+        userProgressDoc,
         toggleDashboardTheory,
         toggleDashboardPractice,
         toggleHSCTheory,

@@ -30,8 +30,9 @@ import {
 import { FirestoreChallenge } from '../../types/challenge';
 import {
   dedupeSyllabusTopics,
-  balanceCardsAcrossDays,
   allocateChaptersSequentially,
+  sanitizeAllocation,
+  checkAllocationSizeSafe,
 } from '../../utils/challengeLogic';
 import {
   getLocalDateString,
@@ -68,15 +69,31 @@ export function parseCardsFromAllocation(
 
   sortedDayEntries.forEach(([dayKey, dayCards]) => {
     const match = dayKey.match(/Day\s+(\d+)/i);
-    const dayNum = match ? parseInt(match[1], 10) : 1;
+    if (!match) {
+      console.warn(
+        `[parseCardsFromAllocation] Skipping invalid day key "${dayKey}" that does not match /Day\\s+(\\d+)/i pattern.`
+      );
+      return;
+    }
+    const dayNum = parseInt(match[1], 10);
+    if (isNaN(dayNum) || dayNum < 1) {
+      console.warn(
+        `[parseCardsFromAllocation] Skipping day key with invalid day number: "${dayKey}".`
+      );
+      return;
+    }
     if (Array.isArray(dayCards)) {
       dayCards.forEach((c: any, cIdx: number) => {
-        const chId =
-          c.chapterId ||
-          (c.id ? c.id.replace(/^chapter-/, '').replace(/-day-\d+.*$/, '') : '') ||
-          c.chapterName ||
-          c.title ||
-          '';
+        let chId = c.chapterId;
+        if (!chId && c.id) {
+          const lastDayIdx = c.id.lastIndexOf('-day-');
+          if (lastDayIdx !== -1) {
+            chId = c.id.slice(0, lastDayIdx).replace(/^chapter-/, '');
+          } else {
+            chId = c.id.replace(/^chapter-/, '');
+          }
+        }
+        chId = chId || c.chapterName || c.title || '';
         let cardId =
           c.id && c.id.startsWith('chapter-')
             ? c.id
@@ -91,24 +108,96 @@ export function parseCardsFromAllocation(
 
         const chapterName = c.chapterName || c.title || 'Chapter';
         const cardTitle = c.title || chapterName;
+        const cardSubject = c.subject || '';
 
-        const cardTopics = Array.isArray(c.topics)
-          ? c.topics.map((t: any) => ({
-              ...t,
-              dayNumber: dayNum,
+        let cardTopics: BoardTopic[];
+        if (Array.isArray(c.topics) && c.topics.length > 0) {
+          cardTopics = c.topics.map((t: any) => {
+            const topicDur =
+              typeof t.durationMinutes === 'number' && t.durationMinutes > 0
+                ? t.durationMinutes
+                : typeof c.durationMinutes === 'number' && c.durationMinutes > 0
+                ? c.durationMinutes
+                : 30;
+
+            const top: BoardTopic = {
+              id: t.id,
+              title: t.title || 'Topic',
+              durationMinutes: topicDur,
+              tag: t.tag || c.tag || 'Core Concept',
+              subject: t.subject || cardSubject,
               chapterId: t.chapterId || chId,
               chapterName: t.chapterName || chapterName,
-            }))
-          : undefined;
+              dayNumber: dayNum,
+              ...(t.subconcept ? { subconcept: t.subconcept } : {}),
+              ...(t.isCarriedOver
+                ? {
+                    isCarriedOver: true,
+                    ...(typeof t.carriedOverFromDay === 'number'
+                      ? { carriedOverFromDay: t.carriedOverFromDay }
+                      : {}),
+                  }
+                : {}),
+            };
+            return top;
+          });
+        } else {
+          // Backward compatibility for legacy challenge documents where cards had no topics array
+          const fallbackDur =
+            typeof c.durationMinutes === 'number' && c.durationMinutes > 0
+              ? c.durationMinutes
+              : 30;
+
+          cardTopics = [
+            {
+              id: c.id ? c.id.replace(/^card-/, '') : `topic-${dayNum}-${cIdx + 1}`,
+              title: cardTitle,
+              durationMinutes: fallbackDur,
+              tag: c.tag || 'Core Concept',
+              subject: cardSubject,
+              chapterId: chId,
+              chapterName,
+              dayNumber: dayNum,
+              ...(c.subconcept ? { subconcept: c.subconcept } : {}),
+              ...(c.isCarriedOver
+                ? {
+                    isCarriedOver: true,
+                    ...(typeof c.carriedOverFromDay === 'number'
+                      ? { carriedOverFromDay: c.carriedOverFromDay }
+                      : {}),
+                  }
+                : {}),
+            },
+          ];
+        }
+
+        const totalCardDuration =
+          typeof c.durationMinutes === 'number' && c.durationMinutes > 0
+            ? c.durationMinutes
+            : cardTopics.reduce((acc, t) => acc + (t.durationMinutes || 0), 0);
+
+        const cardHasCarried = Boolean(
+          c.isCarriedOver || cardTopics.some((t) => t.isCarriedOver)
+        );
+        const cardCarriedFrom =
+          typeof c.carriedOverFromDay === 'number'
+            ? c.carriedOverFromDay
+            : cardTopics.find((t) => typeof t.carriedOverFromDay === 'number')?.carriedOverFromDay;
 
         restored.push({
-          ...c,
           id: cardId,
           chapterId: chId,
           chapterName,
+          subject: cardSubject,
           title: cardTitle,
+          durationMinutes: totalCardDuration,
+          tag: c.tag || `${cardTopics.length} ${cardTopics.length === 1 ? 'topic' : 'topics'}`,
           dayNumber: dayNum,
           topics: cardTopics,
+          ...(cardHasCarried ? { isCarriedOver: true } : {}),
+          ...(cardHasCarried && typeof cardCarriedFrom === 'number'
+            ? { carriedOverFromDay: cardCarriedFrom }
+            : {}),
         });
 
         if (chId && !orderedChapterIds.includes(chId)) {
@@ -137,6 +226,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         prepStartDate: string;
         examStartDate: string;
         durationDays: number;
+        dailyCapacityMinutes?: number;
         dayWiseAllocation: Record<string, unknown[]>;
         selectedTopicIds: string[];
       }
@@ -225,12 +315,19 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     const numDays = duration;
     const baseDate = startDate ? parseLocalDate(startDate) : new Date();
 
-    // Dynamically derive per-day capacity based on selected topics and sprint duration (No hardcoding)
+    // STEP 0 — One canonical daily-capacity source (User-driven or full-utilization target)
     const selected = syllabus.filter((s) => s.checked);
-    const totalDuration = selected.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
+    const totalSelectedMinutes = selected.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
+    const maxLargestTopicDuration = selected.reduce(
+      (max, t) => Math.max(max, t.durationMinutes || 45),
+      30
+    );
+
     const derivedCapacity =
-      numDays > 0 && totalDuration > 0
-        ? Math.max(30, Math.min(720, Math.ceil(totalDuration / numDays)))
+      importPlan?.dailyCapacityMinutes && importPlan.dailyCapacityMinutes > 0
+        ? importPlan.dailyCapacityMinutes
+        : numDays > 0 && totalSelectedMinutes > 0
+        ? Math.max(maxLargestTopicDuration, Math.min(720, Math.ceil(totalSelectedMinutes / numDays)))
         : 150;
 
     return Array.from({ length: numDays }, (_, i) => {
@@ -245,7 +342,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         capacityMinutes: derivedCapacity,
       };
     });
-  }, [startDate, duration, syllabus]);
+  }, [startDate, duration, syllabus, importPlan]);
 
   // Computed End Date formatted in local timezone
   const formattedEndDate = useMemo(() => {
@@ -317,6 +414,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     type: 'success' | 'error' | 'info';
   } | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const explicitLoadChallengeRef = useRef(false);
+  const lastChallengeUpdatedAtRef = useRef<string | undefined>(undefined);
+  const lastChallengeSyllabusRef = useRef<any>(undefined);
+  const isFirstSyllabusHydrateRef = useRef(true);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -399,7 +500,27 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           return;
         }
 
-        if (userEditedSyllabusRef.current) {
+        const isFirstHydrate = isFirstSyllabusHydrateRef.current;
+        isFirstSyllabusHydrateRef.current = false;
+
+        const challengeDocChanged = Boolean(
+          activeChallenge &&
+          (activeChallenge.updatedAt !== lastChallengeUpdatedAtRef.current ||
+           activeChallenge.selected_syllabus !== lastChallengeSyllabusRef.current)
+        );
+        lastChallengeUpdatedAtRef.current = activeChallenge?.updatedAt;
+        lastChallengeSyllabusRef.current = activeChallenge?.selected_syllabus;
+
+        const explicitLoadRan = explicitLoadChallengeRef.current;
+        explicitLoadChallengeRef.current = false;
+
+        const shouldDeriveFromRemote =
+          !userEditedSyllabusRef.current ||
+          explicitLoadRan ||
+          challengeDocChanged ||
+          isFirstHydrate;
+
+        if (userEditedSyllabusRef.current && !shouldDeriveFromRemote) {
           // Keep user's local selection state intact; do not overwrite with remote challenge state
           setSyllabus((prev) => {
             const prevMap = new Map(prev.map((p) => [p.id, p.checked]));
@@ -421,11 +542,18 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           (challengeToUse?.selected_syllabus || []).map((s: { id: string }) => s.id)
         );
 
-        setSyllabus((_prev) => {
+        setSyllabus((prev) => {
           if (activeIds.size > 0) {
             return dedupedItems.map((item) => ({
               ...item,
               checked: activeIds.has(item.id),
+            }));
+          }
+          if (prev.length > 0 && !isFirstHydrate && !explicitLoadRan) {
+            const prevMap = new Map(prev.map((p) => [p.id, p.checked]));
+            return dedupedItems.map((item) => ({
+              ...item,
+              checked: prevMap.has(item.id) ? Boolean(prevMap.get(item.id)) : false,
             }));
           }
           // When activeIds is empty (fresh sprint), set every item unchecked regardless of previous state
@@ -535,6 +663,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
   // Helper to load an existing active challenge into the wizard
   const loadChallengeIntoWizard = (challengeDoc: FirestoreChallenge, isExplicitAction = false) => {
+    explicitLoadChallengeRef.current = true;
     if (isExplicitAction) {
       userEditedSyllabusRef.current = false;
     }
@@ -556,16 +685,45 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     setIsChallengeSaved(true);
     setChallengePayload(challengeDoc as any);
 
+    let restoredCards: BoardCard[] = [];
     if (challengeDoc.day_wise_allocation) {
       const { cards, order } = parseCardsFromAllocation(
         challengeDoc.day_wise_allocation as Record<string, unknown[]>
       );
+      restoredCards = cards;
       if (cards.length > 0) {
         setBoardCards(cards);
         savedAllocationRef.current = challengeDoc.day_wise_allocation as Record<string, BoardCard[]>;
       }
       if (order.length > 0) {
         chapterOrderRef.current = order;
+      }
+    }
+
+    if (
+      restoredCards.length === 0 &&
+      Array.isArray(challengeDoc.selected_syllabus) &&
+      challengeDoc.selected_syllabus.length > 0
+    ) {
+      const dur = typeof challengeDoc.duration === 'number' && challengeDoc.duration > 0 ? challengeDoc.duration : 7;
+      const initialAllocated = allocateChaptersSequentially({
+        topics: challengeDoc.selected_syllabus.map((s) => ({
+          id: s.id,
+          title: s.title,
+          subconcept: s.subconcept || '',
+          durationMinutes: s.durationMinutes || 30,
+          tag: s.tag || 'Core Concept',
+          subject: s.subject || 'General',
+          chapterId: s.subject,
+          chapterName: s.title,
+          dayNumber: 1,
+        })),
+        numDays: dur,
+        firstNonPastDay: 1,
+        onWarning: (msg) => showToast(msg, 'info'),
+      });
+      if (initialAllocated.length > 0) {
+        setBoardCards(initialAllocated);
       }
     }
 
@@ -653,88 +811,48 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     });
     chapterOrderRef.current = updatedOrder;
 
-    // Existing cards map by chapterId or id to preserve day assignments
-    const existingCardsMap = new Map<string, BoardCard>();
-    boardCards.forEach((c) => {
-      if (c.chapterId) {
-        existingCardsMap.set(c.chapterId, c);
-        existingCardsMap.set(`chapter-${c.chapterId}`, c);
-      }
-      if (c.id) {
-        existingCardsMap.set(c.id, c);
-        existingCardsMap.set(c.id.replace(/^chapter-/, ''), c);
-      }
-      if (c.chapterName) existingCardsMap.set(c.chapterName, c);
-      if (c.title) existingCardsMap.set(c.title, c);
-    });
-
     const dayCapacities: Record<number, number> = {};
     columns.forEach((c) => {
       dayCapacities[c.dayNumber] = c.capacityMinutes;
     });
 
-    const fixedCardIds = new Set<string>();
-    const seenNewCardIds = new Set<string>();
-
-    const rawPreparedCards: BoardCard[] = updatedOrder.map((chId, orderIdx) => {
-      const group = groupsMap.get(chId)!;
-      const existing =
-        existingCardsMap.get(chId) ||
-        existingCardsMap.get(`chapter-${chId}`) ||
-        existingCardsMap.get(group.chapterName) ||
-        (group.chapterId ? existingCardsMap.get(group.chapterId) : undefined);
-
-      const totalDuration = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
-
-      const boardTopics: BoardTopic[] = group.topics.map((t) => {
-        const existingTopic = existing?.topics?.find((top) => top.id === t.id);
-        return {
-          id: t.id,
-          title: t.title,
-          subconcept: t.subconcept,
-          durationMinutes: t.durationMinutes || 45,
-          tag: t.tag || 'Core Concept',
-          subject: t.subject || group.subject,
-          chapterId: group.chapterId,
-          chapterName: group.chapterName,
-          isCarriedOver: existingTopic?.isCarriedOver || false,
-          carriedOverFromDay: existingTopic?.carriedOverFromDay,
-        };
+    // Build canonical topic list carrying existing topic metadata
+    const existingTopicsMap = new Map<string, BoardTopic>();
+    boardCards.forEach((c) => {
+      c.topics?.forEach((t) => {
+        existingTopicsMap.set(t.id, t);
       });
+    });
 
-      let cardId = `chapter-${group.chapterId}`;
-      if (seenNewCardIds.has(cardId)) {
-        cardId = `chapter-${group.chapterId}-${orderIdx + 1}`;
-      }
-      seenNewCardIds.add(cardId);
-
-      const isPositionFixed = Boolean(existing && existing.dayNumber >= 1 && existing.dayNumber <= numCols);
-      const assignedDay = isPositionFixed ? existing!.dayNumber : 1;
-      if (isPositionFixed) {
-        fixedCardIds.add(cardId);
-      }
-
-      return {
-        id: cardId,
-        chapterId: group.chapterId,
-        chapterName: group.chapterName,
-        subject: group.subject,
-        title: group.chapterName,
-        durationMinutes: totalDuration,
-        tag: `${group.topics.length} ${group.topics.length === 1 ? 'topic' : 'topics'}`,
-        dayNumber: assignedDay,
-        isCarriedOver: Boolean(existing?.isCarriedOver || boardTopics.some((t) => t.isCarriedOver)),
-        carriedOverFromDay: existing?.carriedOverFromDay,
-        topics: boardTopics,
+    const canonicalTopics: BoardTopic[] = selected.map((t) => {
+      const existing = existingTopicsMap.get(t.id);
+      const chId = t.chapterId || t.chapterName || t.subject;
+      const group = groupsMap.get(chId);
+      const top: BoardTopic = {
+        id: t.id,
+        title: t.title,
+        durationMinutes:
+          typeof t.durationMinutes === 'number' && t.durationMinutes > 0
+            ? t.durationMinutes
+            : 30,
+        tag: t.tag || 'Core Concept',
+        subject: t.subject || group?.subject || 'General',
+        chapterId: chId,
+        chapterName: t.chapterName || group?.chapterName || t.title,
+        isCarriedOver: existing?.isCarriedOver || false,
       };
+      if (t.subconcept) top.subconcept = t.subconcept;
+      if (existing?.carriedOverFromDay) top.carriedOverFromDay = existing.carriedOverFromDay;
+      return top;
     });
 
     const balancedCards = allocateChaptersSequentially({
-      cards: rawPreparedCards,
+      topics: canonicalTopics,
+      canonicalChapterOrder: updatedOrder,
       numDays: numCols,
       firstNonPastDay,
       dayCapacities,
-      fixedCardIds,
+      onWarning: (msg) => showToast(msg, 'info'),
     });
 
     setBoardCards(balancedCards);
@@ -762,14 +880,47 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         (c) => c.dayNumber === col.dayNumber
       );
     });
-    savedAllocationRef.current = dayWiseAllocation;
+    const sanitizedAllocation = sanitizeAllocation(dayWiseAllocation) as Record<string, BoardCard[]>;
+    const sizeCheck = checkAllocationSizeSafe(sanitizedAllocation, savedChallengeId);
+    if (!sizeCheck.isSafe) {
+      console.error(
+        `Failed to persist schedule changes: Payload exceeds 900KB safety limit for challenge ${savedChallengeId}`
+      );
+      showToast('Schedule payload exceeds maximum safe storage size (900KB).', 'error');
+      return;
+    }
+
+    const payloadBuilt = sanitizedAllocation;
+    savedAllocationRef.current = payloadBuilt;
+
+    // Cross-check: If savedAllocationRef.current was overwritten with a newer payload, skip and log
+    if (savedAllocationRef.current !== payloadBuilt) {
+      console.log(
+        `[persistAllocation] Newer allocation already queued in savedAllocationRef.current for challenge "${savedChallengeId}". Skipping outdated write.`
+      );
+      return;
+    }
+
     try {
       await updateChallengeDayAllocation(
         savedChallengeId,
-        dayWiseAllocation,
+        payloadBuilt,
         getLocalMidnightIso(startDate)
       );
+
+      // Post-write cross-check to detect out-of-order response completion
+      if (savedAllocationRef.current !== payloadBuilt) {
+        console.log(
+          `[persistAllocation] Out-of-order write completed for challenge "${savedChallengeId}": savedAllocationRef.current has a newer allocation.`
+        );
+      }
     } catch (err) {
+      if (savedAllocationRef.current !== payloadBuilt) {
+        console.log(
+          `[persistAllocation] Out-of-order write error ignored for challenge "${savedChallengeId}" as savedAllocationRef.current was updated with a newer allocation.`
+        );
+        return;
+      }
       console.error('Failed to auto-save schedule changes to database:', err);
       showToast('Failed to save schedule change to database.', 'error');
     }
@@ -1199,11 +1350,13 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       dayCapacities[c.dayNumber] = c.capacityMinutes;
     });
 
-    const nextCards = balanceCardsAcrossDays({
+    const nextCards = allocateChaptersSequentially({
       cards: boardCards,
+      canonicalChapterOrder: chapterOrderRef.current,
       numDays: numCols,
       firstNonPastDay: firstNonPast,
       dayCapacities,
+      onWarning: (msg) => showToast(msg, 'info'),
     });
 
     setBoardCards(nextCards);
@@ -1338,12 +1491,23 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           (c) => c.dayNumber === col.dayNumber
         );
       });
+      const sanitizedAllocation = sanitizeAllocation(dayWiseAllocation) as Record<string, BoardCard[]>;
 
       const totalMinutes = boardCards.reduce((acc, c) => acc + c.durationMinutes, 0);
       const totalEstimatedHours = Number((totalMinutes / 60).toFixed(1));
 
       const challengeIdToUse =
         savedChallengeId || `ch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+      const sizeCheck = checkAllocationSizeSafe(sanitizedAllocation, challengeIdToUse);
+      if (!sizeCheck.isSafe) {
+        console.error(
+          `Failed to create challenge: Payload exceeds 900KB safety limit for challenge ${challengeIdToUse}`
+        );
+        showToast('Pre-flight check failed: Schedule payload exceeds safe size (900KB).', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
 
       const structuredPayload = {
         challenge_id: challengeIdToUse,
@@ -1362,7 +1526,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           durationMinutes: s.durationMinutes,
           tag: s.tag,
         })),
-        day_wise_allocation: dayWiseAllocation,
+        day_wise_allocation: sanitizedAllocation,
         participants: [
           {
             uid: user.uid,
@@ -1454,132 +1618,131 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       const numCols = columns.length || (typeof duration === 'number' && duration > 0 ? duration : 7);
       const firstNonPastDay = Math.min(numCols, Math.max(1, currentDay));
 
-      // 1. Filter existing boardCards to remove unchecked topics/cards
-      let updatedCards: BoardCard[] = [];
+      // 1. Separate past-day cards (strictly pinned to their days)
+      const pastDayCards: BoardCard[] = [];
       boardCards.forEach((c) => {
-        if (c.topics && c.topics.length > 0) {
-          const remainingTopics = c.topics.filter((t) => !removedIds.has(t.id));
-          if (remainingTopics.length > 0) {
-            const remainingDuration = remainingTopics.reduce(
-              (sum, t) => sum + (t.durationMinutes || 0),
-              0
-            );
-            updatedCards.push({
-              ...c,
-              topics: remainingTopics,
-              durationMinutes: remainingDuration,
-              tag: `${remainingTopics.length} ${remainingTopics.length === 1 ? 'topic' : 'topics'}`,
-            });
-          }
-        } else {
-          const cardTopicId = c.id?.replace(/^card-/, '') || c.id;
-          if (!removedIds.has(cardTopicId) && !removedIds.has(c.id)) {
-            updatedCards.push(c);
+        if (c.dayNumber < firstNonPastDay) {
+          if (c.topics && c.topics.length > 0) {
+            const remainingTopics = c.topics.filter((t) => !removedIds.has(t.id));
+            if (remainingTopics.length > 0) {
+              const remainingDuration = remainingTopics.reduce(
+                (sum, t) => sum + (t.durationMinutes || 0),
+                0
+              );
+              pastDayCards.push({
+                ...c,
+                topics: remainingTopics,
+                durationMinutes: remainingDuration,
+                tag: `${remainingTopics.length} ${remainingTopics.length === 1 ? 'topic' : 'topics'}`,
+              });
+            }
+          } else {
+            const cardTopicId = c.id?.replace(/^card-/, '') || c.id;
+            if (!removedIds.has(cardTopicId) && !removedIds.has(c.id)) {
+              pastDayCards.push(c);
+            }
           }
         }
       });
 
-      // 2. Allocate newly checked topics into updatedCards if any
-      if (newlyChecked.length > 0) {
-        const dayAllocatedMinutes: Record<number, number> = {};
-        for (let d = 1; d <= numCols; d++) {
-          dayAllocatedMinutes[d] = 0;
-        }
-        updatedCards.forEach((c) => {
-          if (c.dayNumber >= 1 && c.dayNumber <= numCols) {
-            dayAllocatedMinutes[c.dayNumber] =
-              (dayAllocatedMinutes[c.dayNumber] || 0) + (c.durationMinutes || 0);
-          }
-        });
+      // 2. Collect all movable topics from existing cards in the movable window (>= firstNonPastDay) + newlyChecked topics
+      const movableTopics: BoardTopic[] = [];
 
-        const findDayForNewTopic = (neededMinutes: number): number => {
-          for (let d = firstNonPastDay; d <= numCols; d++) {
-            const col = columns.find((c) => c.dayNumber === d);
-            const cap = col?.capacityMinutes || columns[0]?.capacityMinutes || 120;
-            const currentLoad = dayAllocatedMinutes[d] || 0;
-            if (currentLoad + neededMinutes <= cap) {
-              dayAllocatedMinutes[d] = currentLoad + neededMinutes;
-              return d;
-            }
-          }
-          let minDay = firstNonPastDay;
-          let minLoad = dayAllocatedMinutes[firstNonPastDay] || 0;
-          for (let d = firstNonPastDay + 1; d <= numCols; d++) {
-            const currentLoad = dayAllocatedMinutes[d] || 0;
-            if (currentLoad < minLoad) {
-              minLoad = currentLoad;
-              minDay = d;
-            }
-          }
-          dayAllocatedMinutes[minDay] = (dayAllocatedMinutes[minDay] || 0) + neededMinutes;
-          return minDay;
-        };
-
-        const newGroups = new Map<
-          string,
-          { chapterId: string; chapterName: string; subject: string; topics: SyllabusItem[] }
-        >();
-
-        newlyChecked.forEach((item) => {
-          const chId = item.chapterId || item.chapterName || item.subject;
-          if (!newGroups.has(chId)) {
-            newGroups.set(chId, {
-              chapterId: item.chapterId || chId,
-              chapterName: item.chapterName || item.title,
-              subject: item.subject,
-              topics: [],
+      boardCards.forEach((c) => {
+        if (c.dayNumber >= firstNonPastDay) {
+          if (c.topics && c.topics.length > 0) {
+            c.topics.forEach((t) => {
+              if (!removedIds.has(t.id)) {
+                const top: BoardTopic = {
+                  id: t.id,
+                  title: t.title,
+                  durationMinutes:
+                    typeof t.durationMinutes === 'number' && t.durationMinutes > 0
+                      ? t.durationMinutes
+                      : typeof c.durationMinutes === 'number' && c.durationMinutes > 0
+                      ? c.durationMinutes
+                      : 30,
+                  tag: t.tag || 'Core Concept',
+                  subject: t.subject || c.subject,
+                  chapterId: t.chapterId || c.chapterId || c.chapterName || 'chapter',
+                  chapterName: t.chapterName || c.chapterName || c.title || 'Chapter',
+                  isCarriedOver: Boolean(t.isCarriedOver || c.isCarriedOver),
+                };
+                if (t.subconcept) top.subconcept = t.subconcept;
+                if (t.carriedOverFromDay || c.carriedOverFromDay) {
+                  top.carriedOverFromDay = t.carriedOverFromDay || c.carriedOverFromDay;
+                }
+                movableTopics.push(top);
+              }
             });
-          }
-          newGroups.get(chId)!.topics.push(item);
-        });
-
-        newGroups.forEach((group) => {
-          const groupDuration = group.topics.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
-          const targetDay = findDayForNewTopic(groupDuration);
-          const boardTopics: BoardTopic[] = group.topics.map((t) => ({
-            id: t.id,
-            title: t.title,
-            subconcept: t.subconcept || '',
-            durationMinutes: t.durationMinutes || 45,
-            dayNumber: targetDay,
-            tag: t.tag,
-          }));
-
-          const existingCardIdx = updatedCards.findIndex(
-            (c) =>
-              c.dayNumber === targetDay &&
-              (c.chapterId === group.chapterId || c.chapterName === group.chapterName)
-          );
-
-          if (existingCardIdx >= 0) {
-            const existingCard = updatedCards[existingCardIdx];
-            const mergedTopics = [...(existingCard.topics || []), ...boardTopics];
-            const mergedDuration = mergedTopics.reduce(
-              (acc, t) => acc + (t.durationMinutes || 0),
-              0
-            );
-            updatedCards[existingCardIdx] = {
-              ...existingCard,
-              topics: mergedTopics,
-              durationMinutes: mergedDuration,
-              tag: `${mergedTopics.length} ${mergedTopics.length === 1 ? 'topic' : 'topics'}`,
-            };
           } else {
-            const newCard: BoardCard = {
-              id: `chapter-${group.chapterId}-${targetDay}-${Date.now()}`,
-              chapterId: group.chapterId,
-              chapterName: group.chapterName,
-              subject: group.subject,
-              title: group.chapterName,
-              tag: `${boardTopics.length} ${boardTopics.length === 1 ? 'topic' : 'topics'}`,
-              dayNumber: targetDay,
-              durationMinutes: groupDuration,
-              topics: boardTopics,
-            };
-            updatedCards.push(newCard);
+            const cardTopicId = c.id?.replace(/^card-/, '') || c.id;
+            if (!removedIds.has(cardTopicId) && !removedIds.has(c.id)) {
+              const top: BoardTopic = {
+                id: cardTopicId,
+                title: c.title,
+                durationMinutes:
+                  typeof c.durationMinutes === 'number' && c.durationMinutes > 0
+                    ? c.durationMinutes
+                    : 30,
+                tag: c.tag || 'Core Concept',
+                subject: c.subject,
+                chapterId: c.chapterId || c.chapterName || 'chapter',
+                chapterName: c.chapterName || c.title || 'Chapter',
+                isCarriedOver: Boolean(c.isCarriedOver),
+              };
+              if (c.carriedOverFromDay) top.carriedOverFromDay = c.carriedOverFromDay;
+              movableTopics.push(top);
+            }
           }
-        });
-      }
+        }
+      });
+
+      newlyChecked.forEach((t) => {
+        const top: BoardTopic = {
+          id: t.id,
+          title: t.title,
+          durationMinutes:
+            typeof t.durationMinutes === 'number' && t.durationMinutes > 0
+              ? t.durationMinutes
+              : 30,
+          tag: t.tag || 'Core Concept',
+          subject: t.subject,
+          chapterId: t.chapterId || t.chapterName || t.subject || 'chapter',
+          chapterName: t.chapterName || t.title || 'Chapter',
+          isCarriedOver: false,
+        };
+        if (t.subconcept) top.subconcept = t.subconcept;
+        movableTopics.push(top);
+      });
+
+      // Maintain and update canonical chapter order
+      const currentOrder = [...chapterOrderRef.current];
+      movableTopics.forEach((t) => {
+        if (t.chapterId && !currentOrder.includes(t.chapterId)) {
+          currentOrder.push(t.chapterId);
+        }
+      });
+      chapterOrderRef.current = currentOrder;
+
+      // Per-day capacities
+      const dayCapacities: Record<number, number> = {};
+      columns.forEach((col) => {
+        dayCapacities[col.dayNumber] = col.capacityMinutes;
+      });
+
+      // Re-run smoothed engine over movable window with past-day cards pinned
+      const updatedCards = allocateChaptersSequentially({
+        cards: pastDayCards,
+        topics: movableTopics,
+        canonicalChapterOrder: currentOrder,
+        numDays: numCols,
+        firstNonPastDay,
+        dayCapacities,
+        onWarning: (msg) => showToast(msg, 'info'),
+      });
+
+      setBoardCards(updatedCards);
 
       // 3. Rebuild dayWiseAllocation
       const dayWiseAllocation: Record<string, BoardCard[]> = {};
@@ -1588,6 +1751,16 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           (c) => c.dayNumber === col.dayNumber
         );
       });
+      const sanitizedAllocation = sanitizeAllocation(dayWiseAllocation) as Record<string, BoardCard[]>;
+      const sizeCheck = checkAllocationSizeSafe(sanitizedAllocation, savedChallengeId);
+      if (!sizeCheck.isSafe) {
+        console.error(
+          `Failed to update syllabus: Payload exceeds 900KB safety limit for challenge ${savedChallengeId}`
+        );
+        showToast('Schedule payload exceeds safe size (900KB).', 'error');
+        setIsCreatingChallenge(false);
+        return;
+      }
 
       // 4. Format updated syllabus matching exactly the currently checked topics
       const updatedSyllabus = currentlyChecked.map((s) => ({
@@ -1613,16 +1786,16 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         savedChallengeId,
         updatedSyllabus,
         updatedParticipants,
-        dayWiseAllocation
+        sanitizedAllocation
       );
 
       setBoardCards(updatedCards);
-      savedAllocationRef.current = dayWiseAllocation;
+      savedAllocationRef.current = sanitizedAllocation;
       const updatedPayload = {
         ...(challengePayload || activeChallenge || loadedChallenge),
         selected_syllabus: updatedSyllabus,
         participants: updatedParticipants,
-        day_wise_allocation: dayWiseAllocation,
+        day_wise_allocation: sanitizedAllocation,
         totalTopics: updatedSyllabus.length,
       };
       setChallengePayload(updatedPayload as any);
@@ -1632,7 +1805,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           ...activeChallenge,
           selected_syllabus: updatedSyllabus,
           participants: updatedParticipants,
-          day_wise_allocation: dayWiseAllocation,
+          day_wise_allocation: sanitizedAllocation,
         });
       }
       userEditedSyllabusRef.current = false;
@@ -1694,6 +1867,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         (c) => c.dayNumber === col.dayNumber
       );
     });
+    const sanitizedNextAllocation = sanitizeAllocation(nextAllocation) as Record<string, BoardCard[]>;
 
     // 4. Update selected_syllabus
     const currentSavedSyllabus =
@@ -1722,7 +1896,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           topicId,
           currentSavedSyllabus,
           existingParticipants,
-          nextAllocation
+          sanitizedNextAllocation
         );
       } catch (err) {
         console.error('Failed to remove topic from Firestore:', err);
@@ -1733,12 +1907,12 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     // 7. Update state
     setBoardCards(nextBoardCards);
-    savedAllocationRef.current = nextAllocation;
+    savedAllocationRef.current = sanitizedNextAllocation;
     const updatedPayload = {
       ...(challengePayload || activeChallenge || loadedChallenge),
       selected_syllabus: updatedSyllabus,
       participants: updatedParticipants,
-      day_wise_allocation: nextAllocation,
+      day_wise_allocation: sanitizedNextAllocation,
       totalTopics: updatedSyllabus.length,
     };
     setChallengePayload(updatedPayload as any);
@@ -1747,7 +1921,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         ...activeChallenge,
         selected_syllabus: updatedSyllabus,
         participants: updatedParticipants,
-        day_wise_allocation: nextAllocation,
+        day_wise_allocation: sanitizedNextAllocation,
       });
     }
 
@@ -1782,6 +1956,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         (c) => c.dayNumber === col.dayNumber
       );
     });
+    const sanitizedNextAllocation = sanitizeAllocation(nextAllocation) as Record<string, BoardCard[]>;
 
     // 4. Update selected_syllabus
     const currentSavedSyllabus =
@@ -1811,7 +1986,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
           savedChallengeId,
           updatedSyllabus,
           updatedParticipants,
-          nextAllocation
+          sanitizedNextAllocation
         );
       } catch (err) {
         console.error('Failed to remove chapter from Firestore:', err);
@@ -1822,12 +1997,12 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     // 7. Update state
     setBoardCards(nextBoardCards);
-    savedAllocationRef.current = nextAllocation;
+    savedAllocationRef.current = sanitizedNextAllocation;
     const updatedPayload = {
       ...(challengePayload || activeChallenge || loadedChallenge),
       selected_syllabus: updatedSyllabus,
       participants: updatedParticipants,
-      day_wise_allocation: nextAllocation,
+      day_wise_allocation: sanitizedNextAllocation,
       totalTopics: updatedSyllabus.length,
     };
     setChallengePayload(updatedPayload as any);
@@ -1836,7 +2011,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         ...activeChallenge,
         selected_syllabus: updatedSyllabus,
         participants: updatedParticipants,
-        day_wise_allocation: nextAllocation,
+        day_wise_allocation: sanitizedNextAllocation,
       });
     }
 

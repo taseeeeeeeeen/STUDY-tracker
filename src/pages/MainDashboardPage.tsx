@@ -8,6 +8,7 @@ import { FocusTimer } from '../components/FocusTimer';
 import { StreakWidget } from '../components/StreakWidget';
 import { AddTopicModal } from '../components/AddTopicModal';
 import { DetailedBreakdownModal } from '../components/DetailedBreakdownModal';
+import { ChallengeArchiveSection } from '../components/ChallengeArchiveSection';
 import { Link } from 'react-router-dom';
 
 export const MainDashboardPage: React.FC = () => {
@@ -190,6 +191,9 @@ export const MainDashboardPage: React.FC = () => {
             />
           </div>
         </div>
+
+        {/* Challenge Archive Section */}
+        <ChallengeArchiveSection />
       </div>
 
       {/* Modals */}

@@ -16,6 +16,7 @@ import {
   ChallengeParticipant,
   ParticipantTopicProgress,
 } from '../types/challenge';
+import { sanitizeAllocation, checkAllocationSizeSafe, dedupeSyllabusTopics } from '../utils/challengeLogic';
 
 const COLLECTION_NAME = 'challenges';
 
@@ -69,11 +70,23 @@ export async function createFirestoreChallenge(
       code = candidate;
     }
 
+    let sanitizedAllocation: Record<string, unknown[]> | undefined = undefined;
+    if (challenge.day_wise_allocation) {
+      sanitizedAllocation = sanitizeAllocation(challenge.day_wise_allocation);
+      const sizeCheck = checkAllocationSizeSafe(sanitizedAllocation, challengeId);
+      if (!sizeCheck.isSafe) {
+        throw new Error(
+          `Schedule data exceeds safe storage limit (900KB). Please reduce the number of topics or duration.`
+        );
+      }
+    }
+
     const finalPayload: FirestoreChallenge = {
       ...challenge,
       challenge_id: challengeId,
       code,
       updatedAt: new Date().toISOString(),
+      ...(sanitizedAllocation ? { day_wise_allocation: sanitizedAllocation } : {}),
     };
 
     try {
@@ -251,10 +264,18 @@ export async function updateChallengeDayAllocation(
   dayWiseAllocation: Record<string, unknown[]>,
   startDate: string
 ): Promise<void> {
+  const sanitizedAllocation = sanitizeAllocation(dayWiseAllocation);
+  const sizeCheck = checkAllocationSizeSafe(sanitizedAllocation, challengeId);
+  if (!sizeCheck.isSafe) {
+    throw new Error(
+      `Schedule data exceeds safe storage limit (900KB). Please reduce the number of topics or duration.`
+    );
+  }
+
   const challengeRef = doc(db, COLLECTION_NAME, challengeId);
   try {
     await updateDoc(challengeRef, {
-      day_wise_allocation: dayWiseAllocation,
+      day_wise_allocation: sanitizedAllocation,
       start_date: startDate,
       updatedAt: new Date().toISOString(),
     });
@@ -269,6 +290,17 @@ export async function updateChallengeSyllabus(
   participants: ChallengeParticipant[],
   dayWiseAllocation?: Record<string, unknown[]>
 ): Promise<void> {
+  let sanitizedAllocation: Record<string, unknown[]> | undefined = undefined;
+  if (dayWiseAllocation) {
+    sanitizedAllocation = sanitizeAllocation(dayWiseAllocation);
+    const sizeCheck = checkAllocationSizeSafe(sanitizedAllocation, challengeId);
+    if (!sizeCheck.isSafe) {
+      throw new Error(
+        `Schedule data exceeds safe storage limit (900KB). Please reduce the number of topics or duration.`
+      );
+    }
+  }
+
   const challengeRef = doc(db, COLLECTION_NAME, challengeId);
   try {
     const updateData: Record<string, unknown> = {
@@ -276,8 +308,8 @@ export async function updateChallengeSyllabus(
       participants,
       updatedAt: new Date().toISOString(),
     };
-    if (dayWiseAllocation) {
-      updateData.day_wise_allocation = dayWiseAllocation;
+    if (sanitizedAllocation) {
+      updateData.day_wise_allocation = sanitizedAllocation;
     }
     await updateDoc(challengeRef, updateData);
   } catch (err) {
@@ -417,5 +449,90 @@ export async function deleteFirestoreChallenge(challengeId: string): Promise<voi
     handleFirestoreError(err, OperationType.DELETE, `${COLLECTION_NAME}/${challengeId}`);
   }
 }
+
+
+/**
+ * Synchronizes a participant's completed_topics in the challenge document
+ * by joining the challenge's OWN selected_syllabus (deduped with dedupeSyllabusTopics)
+ * against that participant's user_progress/{uid} topicProgress (both theory and practice true).
+ * Updates ONLY participants and updatedAt to comply strictly with Firestore update rules.
+ */
+export async function syncParticipantCompletion(
+  challengeId: string,
+  uid: string
+): Promise<void> {
+  if (!challengeId || !uid) return;
+
+  const challengeRef = doc(db, COLLECTION_NAME, challengeId);
+  const userProgressRef = doc(db, 'user_progress', uid);
+  const userDocRef = doc(db, 'users', uid);
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      const challengeSnap = await transaction.get(challengeRef);
+      if (!challengeSnap.exists()) return;
+
+      const userProgSnap = await transaction.get(userProgressRef);
+      const userSnap = await transaction.get(userDocRef);
+      const challengeData = challengeSnap.data() as FirestoreChallenge;
+
+      const progressData = userProgSnap.exists()
+        ? (userProgSnap.data() as { topicProgress?: Record<string, { theory?: boolean; practice?: boolean }> })
+        : null;
+      const topicProgress = progressData?.topicProgress || {};
+
+      const rawSyllabus = challengeData.selected_syllabus || [];
+      const dedupedSyllabus = dedupeSyllabusTopics(rawSyllabus);
+
+      let completedCount = 0;
+      for (const topic of dedupedSyllabus) {
+        if (topic.id) {
+          const prog = topicProgress[topic.id];
+          if (prog?.theory && prog?.practice) {
+            completedCount++;
+          }
+        }
+      }
+
+      const existingParticipants = challengeData.participants || [];
+      const participantIndex = existingParticipants.findIndex((p) => p.uid === uid);
+      const userName = userSnap.exists() ? userSnap.data().name || 'Student' : 'Student';
+
+      let updatedParticipants: ChallengeParticipant[];
+      if (participantIndex >= 0) {
+        updatedParticipants = existingParticipants.map((p, idx) => {
+          if (idx === participantIndex) {
+            return {
+              ...p,
+              name: p.name || userName,
+              completed_topics: completedCount,
+              last_completion_timestamp: Date.now(),
+            };
+          }
+          return p;
+        });
+      } else {
+        updatedParticipants = [
+          ...existingParticipants,
+          {
+            uid,
+            name: userName,
+            completed_topics: completedCount,
+            total_challenge_topics: dedupedSyllabus.length,
+            last_completion_timestamp: Date.now(),
+          },
+        ];
+      }
+
+      transaction.update(challengeRef, {
+        participants: updatedParticipants,
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${COLLECTION_NAME}/${challengeId}`);
+  }
+}
+
 
 

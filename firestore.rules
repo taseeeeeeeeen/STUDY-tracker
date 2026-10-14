@@ -35,12 +35,26 @@ service cloud.firestore {
       allow write: if isSelf(uid);
     }
 
+    // NOTE: App code must call syncParticipantCompletion(challengeId, uid) via runTransaction
+    // updating ONLY participants and updatedAt so it complies with this tightened rule.
+    function validParticipantUpdate() {
+      let diff = request.resource.data.diff(resource.data);
+      let removedOld = resource.data.participants.removeAll(request.resource.data.participants);
+      let addedNew = request.resource.data.participants.removeAll(resource.data.participants);
+      return signedIn() &&
+        diff.affectedKeys().hasOnly(['participants', 'updatedAt']) &&
+        (request.resource.data.participants.size() == resource.data.participants.size() ||
+         request.resource.data.participants.size() == resource.data.participants.size() + 1) &&
+        (removedOld.size() == 0 || (removedOld.size() == 1 && removedOld[0].uid == request.auth.uid)) &&
+        (addedNew.size() == 0 || (addedNew.size() == 1 && addedNew[0].uid == request.auth.uid));
+    }
+
     match /challenges/{challengeId} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.created_by == request.auth.uid;
       allow update: if isAdmin() ||
         (signedIn() && resource.data.created_by == request.auth.uid) ||
-        (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants', 'updatedAt']));
+        validParticipantUpdate();
       allow delete: if isAdmin() || (signedIn() && resource.data.created_by == request.auth.uid);
     }
 

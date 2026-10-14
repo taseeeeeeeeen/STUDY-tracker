@@ -1,4 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { MasterSubject } from '../types/syllabus';
+import { subscribeMasterSyllabus } from '../services/syllabusService';
+import { useAuth } from '../context/AuthContext';
+import { useStudyTrack } from '../context/StudyTrackContext';
 
 export interface QuickLogEntry {
   subject: string;
@@ -12,15 +16,59 @@ interface QuickLogModalProps {
   onLogCompleted: (log: QuickLogEntry) => void | Promise<void>;
 }
 
+// No hardcoded subjects; derived from master syllabus or empty
+
 export const QuickLogModal: React.FC<QuickLogModalProps> = ({
   isOpen,
   onClose,
   onLogCompleted,
 }) => {
-  const [subject, setSubject] = useState('Physics');
+  const { user } = useAuth();
+  const { hiddenSubjectIds } = useStudyTrack();
+  const [masterSubjects, setMasterSubjects] = useState<MasterSubject[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!user) {
+      setMasterSubjects([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const unsub = subscribeMasterSyllabus(
+      (subs) => {
+        setMasterSubjects(subs || []);
+        setLoading(false);
+      },
+      () => setLoading(false)
+    );
+    return () => unsub();
+  }, [isOpen, user]);
+
+  const visibleSubjects = useMemo(() => {
+    return masterSubjects.filter((s) => !hiddenSubjectIds.includes(s.id));
+  }, [masterSubjects, hiddenSubjectIds]);
+
+  const subjectOptions = useMemo(() => {
+    const names = Array.from(new Set(visibleSubjects.map((s) => s.name.trim()).filter(Boolean)));
+    names.sort((a, b) => a.localeCompare(b));
+    if (names.length > 0) return names;
+    return loading ? [] : ['General Study'];
+  }, [visibleSubjects, loading]);
+
+  const [subject, setSubject] = useState(subjectOptions[0] || 'General Study');
   const [minutes, setMinutes] = useState(30);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && subjectOptions.length > 0) {
+      if (!subjectOptions.includes(subject)) {
+        setSubject(subjectOptions[0]);
+      }
+    }
+  }, [isOpen, subjectOptions, subject]);
 
   if (!isOpen) return null;
 
@@ -62,10 +110,11 @@ export const QuickLogModal: React.FC<QuickLogModalProps> = ({
               onChange={(e) => setSubject(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-[#c0c9c0] bg-white text-[#0b1c30]"
             >
-              <option value="Physics">Physics</option>
-              <option value="Chemistry">Chemistry</option>
-              <option value="Math">Math</option>
-              <option value="Biology">Biology</option>
+              {subjectOptions.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
             </select>
           </div>
 

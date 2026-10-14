@@ -1,5 +1,6 @@
 import { Task, SubjectWeeklyStat, WeeklyBacklog, ActiveSprint } from '../types/dashboard';
 import { FirestoreChallenge } from '../types/challenge';
+import { computeCurrentSprintDay, getMidnightEndOfDay, parseLocalDate } from '../utils/dateUtils';
 
 const SUBJECT_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
   Physics: { label: 'Phys', color: '#003820', bgColor: '#6ffbbe' },
@@ -58,19 +59,28 @@ export function computeBacklog(
   nowMs: number
 ): WeeklyBacklog {
   const totalDays = activeChallenge?.duration || 7;
-  const startDate = activeChallenge?.start_date
-    ? new Date(activeChallenge.start_date).getTime()
-    : nowMs;
-  const daysRemaining = Math.max(
-    0,
-    totalDays - Math.floor((nowMs - startDate) / (1000 * 60 * 60 * 24))
-  );
+  const startDateStr = activeChallenge?.start_date;
+
+  let daysRemaining = 0;
+  let midtermWeek = 1;
+
+  if (startDateStr) {
+    const sprintEndMs = getMidnightEndOfDay(startDateStr, totalDays);
+    const isExpired = (!isNaN(sprintEndMs) && nowMs > sprintEndMs) || activeChallenge?.status === 'archived';
+
+    if (isExpired) {
+      daysRemaining = 0;
+    } else {
+      const currentDay = computeCurrentSprintDay(startDateStr, totalDays, nowMs);
+      daysRemaining = Math.max(0, totalDays - currentDay);
+    }
+
+    const startDate = parseLocalDate(startDateStr).getTime();
+    midtermWeek = Math.max(1, Math.ceil((nowMs - startDate) / (1000 * 60 * 60 * 24 * 7)));
+  }
 
   return {
-    midtermWeek: Math.max(
-      1,
-      Math.ceil((nowMs - startDate) / (1000 * 60 * 60 * 24 * 7))
-    ),
+    midtermWeek,
     targetDay: `Day ${totalDays}`,
     targetTime: '23:59',
     daysRemaining,
@@ -98,11 +108,25 @@ export function computeSprint(
       totalTopics: 0,
     };
   }
-  const startDate = new Date(activeChallenge.start_date).getTime();
+
   const totalDays = activeChallenge.duration || 7;
-  const elapsedDays = Math.max(0, Math.floor((nowMs - startDate) / (1000 * 60 * 60 * 24)));
-  const daysCompleted = Math.min(totalDays, elapsedDays);
-  const daysLeft = Math.max(0, totalDays - daysCompleted);
+  const sprintEndMs = getMidnightEndOfDay(activeChallenge.start_date, totalDays);
+  const isSprintExpired =
+    activeChallenge.status === 'archived' ||
+    (!isNaN(sprintEndMs) && nowMs > sprintEndMs);
+
+  let currentDay = computeCurrentSprintDay(activeChallenge.start_date, totalDays, nowMs);
+  let daysCompleted = currentDay - 1;
+  let daysLeft = totalDays - currentDay;
+  let phase = `Day ${currentDay} of ${totalDays}`;
+  let rewardBadge = 'Mastery Badge at finish';
+
+  if (isSprintExpired) {
+    phase = 'Sprint Completed';
+    daysCompleted = totalDays;
+    daysLeft = 0;
+    rewardBadge = '🏆 Sprint Completed!';
+  }
 
   const customName = activeChallenge.challenge_name?.trim() || `${totalDays}-Day Study Sprint`;
 
@@ -126,11 +150,11 @@ export function computeSprint(
 
   return {
     name: customName,
-    phase: daysLeft === 0 ? 'Sprint Completed' : `Day ${daysCompleted + 1} of ${totalDays}`,
+    phase,
     daysLeft,
     daysCompleted,
     totalDays,
-    rewardBadge: daysLeft === 0 ? '🏆 Sprint Completed!' : 'Mastery Badge at finish',
+    rewardBadge,
     topicProgressPercent,
     completedTopics,
     totalTopics,
