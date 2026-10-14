@@ -17,29 +17,6 @@ interface DayState {
   lastSubject?: string;
 }
 
-function canAddTopicToDay(day: DayState, topic: SyllabusItem, respectCapacity: boolean): boolean {
-  const dur = topic.durationMinutes || 45;
-  const chId = topic.chapterId || topic.chapterName || topic.subject;
-  const currentChMins = day.chapterMinutes.get(chId) || 0;
-  
-  // Rule B: Chapter daily cap of 180 minutes
-  if (currentChMins + dur > 180) {
-    return false;
-  }
-
-  // Rule R2: Day capacity
-  if (respectCapacity && dur > day.remainingCapacity) {
-    return false;
-  }
-
-  // Rule A: Daily subject limit (max 3 subjects)
-  if (!day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3) {
-    return false;
-  }
-
-  return true;
-}
-
 export function buildStrategicRoutine(options: {
   topics: SyllabusItem[];
   numDays: number;
@@ -68,12 +45,6 @@ export function buildStrategicRoutine(options: {
     bucket.topics.push(topic);
   });
 
-  // Track the last day a chapter chunk was placed during Phase 1
-  const lastPlacedDay: Record<string, number> = {};
-  bucketsList.forEach((b) => {
-    lastPlacedDay[b.chapterId] = 0;
-  });
-
   // Initialize day states (1-indexed for convenience)
   const dayStates: Record<number, DayState> = {};
   for (let d = 1; d <= numDays; d++) {
@@ -87,235 +58,200 @@ export function buildStrategicRoutine(options: {
     };
   }
 
-  // Phase 1: main placement (R1-R6)
-  let d = 1;
-  let scanStartIndex = 0;
-  let consecutiveSkips = 0;
+  // Phase 1: Sequential Chapter Allocation with Single-Day Preference & Non-Splitting Priority
+  let currentDayNum = 1;
 
-  // We loop until we have scanned all days consecutively and placed nothing, or all buckets are empty
-  while (consecutiveSkips < numDays) {
-    // Check if all buckets are empty
-    const allEmpty = bucketsList.every((b) => b.topics.length === 0);
-    if (allEmpty) {
-      break;
-    }
+  for (let bIndex = 0; bIndex < bucketsList.length; bIndex++) {
+    const bucket = bucketsList[bIndex];
+    // Create a copy of topics to avoid mutating
+    const bucketTopics = [...bucket.topics];
 
-    const day = dayStates[d];
+    while (bucketTopics.length > 0) {
+      let placedSome = false;
 
-    // Find the best eligible bucket for Day d
-    let bestBucketIndex = -1;
-    let bestScore = -1;
-
-    for (let offset = 0; offset < bucketsList.length; offset++) {
-      const idx = (scanStartIndex + offset) % bucketsList.length;
-      const bucket = bucketsList[idx];
-
-      if (bucket.topics.length === 0) continue;
-
-      // Rule check: must not have been placed on Day d yet
-      if (lastPlacedDay[bucket.chapterId] >= d) continue;
-
-      // Rule A check: Day may contain AT MOST 3 distinct subjects
-      const isEligibleSubject = day.placedSubjects.has(bucket.subject) || day.placedSubjects.size < 3;
-      if (!isEligibleSubject) continue;
-
-      // Rule check: first topic must fit and respect all rules
-      if (!canAddTopicToDay(day, bucket.topics[0], true)) continue;
-
-      // Evaluate preference score for soft constraints (R3, R4)
-      const isNewSubjectOnDay = !day.placedSubjects.has(bucket.subject); // R3
-      const alternatesWithinDay = day.lastSubject === undefined || day.lastSubject !== bucket.subject; // R4
-      
-      const prevDay = dayStates[d - 1];
-      const alternatesConsecutiveDays = prevDay === undefined || prevDay.lastSubject === undefined || prevDay.lastSubject !== bucket.subject; // R4
-
-      // Assign scores in strict priority order:
-      // R3 (Single-chapter rule) is the highest priority soft constraint
-      // R4 (Subject variation: alternate within day and alternate consecutive days)
-      let score = 0;
-      if (isNewSubjectOnDay) {
-        score += 10;
-      }
-      if (alternatesWithinDay) {
-        score += 5;
-      }
-      if (alternatesConsecutiveDays) {
-        score += 2;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestBucketIndex = idx;
-      }
-    }
-
-    if (bestBucketIndex !== -1) {
-      // Place a chunk from this bucket
-      const bucket = bucketsList[bestBucketIndex];
-      const chunk: SyllabusItem[] = [];
-      let chunkDuration = 0;
-
-      for (const topic of bucket.topics) {
-        const dur = topic.durationMinutes || 45;
-        const chId = topic.chapterId || topic.chapterName || topic.subject;
-        const currentChMins = (day.chapterMinutes.get(chId) || 0) + chunkDuration;
-
-        // Rule B: Chapter daily cap (180 min)
-        if (currentChMins + dur > 180) break;
-        // Rule R2: Day capacity
-        if (dur > day.remainingCapacity - chunkDuration) break;
-        // Rule A: Daily subject limit
-        if (!day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3) break;
-
-        chunk.push(topic);
-        chunkDuration += dur;
-      }
-
-      if (chunk.length > 0) {
-        // Append chunk to Day d
-        day.placedTopics.push(...chunk);
-        day.remainingCapacity -= chunkDuration;
-        day.placedSubjects.add(bucket.subject);
-        day.placedChapters.add(bucket.chapterId);
-        day.lastSubject = bucket.subject;
-
-        const currentMins = day.chapterMinutes.get(bucket.chapterId) || 0;
-        day.chapterMinutes.set(bucket.chapterId, currentMins + chunkDuration);
-
-        // Remove placed topics from the bucket
-        bucket.topics = bucket.topics.slice(chunk.length);
-
-        // Mark last placed day
-        lastPlacedDay[bucket.chapterId] = d;
-
-        // Rotate scanStartIndex
-        scanStartIndex = (bestBucketIndex + 1) % bucketsList.length;
-
-        // Reset consecutive skips since we successfully placed a chunk
-        consecutiveSkips = 0;
-      } else {
-        consecutiveSkips++;
-      }
-
-      // Move to next day (R6 wrap-around)
-      d = (d % numDays) + 1;
-    } else {
-      // No eligible bucket can be placed on Day d right now
-      consecutiveSkips++;
-      d = (d % numDays) + 1;
-    }
-  }
-
-  // Phase 2: leftovers (R7)
-  const leftoverTopics: SyllabusItem[] = [];
-  bucketsList.forEach((bucket) => {
-    if (bucket.topics.length > 0) {
-      leftoverTopics.push(...bucket.topics);
-    }
-  });
-
-  let currentDayForLeftover = 1;
-  for (const topic of leftoverTopics) {
-    let placed = false;
-    let attempts = 0;
-
-    // First pass: try to place topic where it fits capacity AND respects Rule A and Rule B
-    while (!placed && attempts < numDays) {
-      const day = dayStates[currentDayForLeftover];
-      if (canAddTopicToDay(day, topic, true)) {
-        const dur = topic.durationMinutes || 45;
-        day.placedTopics.push(topic);
-        day.remainingCapacity -= dur;
-        day.placedSubjects.add(topic.subject);
-        day.placedChapters.add(topic.chapterId || topic.chapterName || topic.subject);
-        day.lastSubject = topic.subject;
-
-        const chId = topic.chapterId || topic.chapterName || topic.subject;
-        const currentMins = day.chapterMinutes.get(chId) || 0;
-        day.chapterMinutes.set(chId, currentMins + dur);
-
-        placed = true;
-        currentDayForLeftover = (currentDayForLeftover % numDays) + 1;
-      } else {
-        currentDayForLeftover = (currentDayForLeftover % numDays) + 1;
-        attempts++;
-      }
-    }
-
-    // Second pass: force-place by ignoring capacity, but still respecting Rule A (subjects <= 3) and Rule B (chapter cap <= 180)
-    if (!placed) {
-      let bestDay: DayState | null = null;
-      for (let d = 1; d <= numDays; d++) {
+      for (let d = currentDayNum; d <= numDays; d++) {
         const day = dayStates[d];
-        if (canAddTopicToDay(day, topic, false)) {
-          if (!bestDay) {
-            bestDay = day;
-          } else {
-            const countBest = bestDay.placedSubjects.size;
-            const countCurr = day.placedSubjects.size;
-            if (countCurr < countBest) {
-              bestDay = day;
-            } else if (countCurr === countBest) {
-              const workloadBest = dailyCapacityMinutes - bestDay.remainingCapacity;
-              const workloadCurr = dailyCapacityMinutes - day.remainingCapacity;
-              if (workloadCurr < workloadBest) {
-                bestDay = day;
-              }
-            }
+
+        const chunk: SyllabusItem[] = [];
+        let chunkDuration = 0;
+        let subjectLimitExceeded = false;
+        let capacityExceeded = false;
+
+        for (let i = 0; i < bucketTopics.length; i++) {
+          const topic = bucketTopics[i];
+          const dur = topic.durationMinutes || 45;
+          const chId = topic.chapterId || topic.chapterName || topic.subject;
+          const currentChMins = (day.chapterMinutes.get(chId) || 0) + chunkDuration;
+
+          // Rule B: Chapter daily cap (180 min)
+          if (currentChMins + dur > 180) {
+            break;
+          }
+
+          // Rule A: Daily subject limit (max 3 subjects)
+          const wouldExceedSubjectLimit = !day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3;
+          if (wouldExceedSubjectLimit) {
+            subjectLimitExceeded = true;
+            break;
+          }
+
+          // Rule R2: Day capacity
+          if (dur > day.remainingCapacity - chunkDuration) {
+            capacityExceeded = true;
+            break;
+          }
+
+          chunk.push(topic);
+          chunkDuration += dur;
+        }
+
+        // Smart Non-Splitting Heuristic:
+        // If we can only place SOME topics of this chapter because of capacity (capacityExceeded === true),
+        // and we are NOT on the last day, and the remaining topics can fit entirely on a single day,
+        // then we defer this chapter to the next day to keep it intact.
+        if (capacityExceeded && d < numDays) {
+          const totalRemainingChDur = bucketTopics.reduce((sum: number, t: SyllabusItem) => sum + (t.durationMinutes || 45), 0);
+          if (totalRemainingChDur <= dailyCapacityMinutes && totalRemainingChDur <= 180) {
+            currentDayNum = d + 1;
+            continue; // Go to next day
           }
         }
-      }
 
-      // If no day found respecting both, fallback to just respecting subjects <= 3 (hard invariant)
-      if (!bestDay) {
-        for (let d = 1; d <= numDays; d++) {
-          const day = dayStates[d];
-          const hasSubjectOrFreeSlot = day.placedSubjects.has(topic.subject) || day.placedSubjects.size < 3;
-          if (hasSubjectOrFreeSlot) {
-            if (!bestDay) {
-              bestDay = day;
+        if (subjectLimitExceeded && d < numDays) {
+          currentDayNum = d + 1;
+          continue; // Go to next day
+        }
+
+        if (chunk.length > 0) {
+          day.placedTopics.push(...chunk);
+          day.remainingCapacity -= chunkDuration;
+          day.placedSubjects.add(bucket.subject);
+          day.placedChapters.add(bucket.chapterId);
+          day.lastSubject = bucket.subject;
+
+          const currentMins = day.chapterMinutes.get(bucket.chapterId) || 0;
+          day.chapterMinutes.set(bucket.chapterId, currentMins + chunkDuration);
+
+          bucketTopics.splice(0, chunk.length);
+          placedSome = true;
+          currentDayNum = d;
+          break; // re-evaluate remaining topics of this chapter
+        } else {
+          // If chunk is empty and we're not on the last day, move forward
+          if (d < numDays) {
+            currentDayNum = d + 1;
+          } else {
+            // Last day fallback: force-place what can fit respecting Rule A and Rule B
+            const forceChunk: SyllabusItem[] = [];
+            let forceDuration = 0;
+
+            for (let i = 0; i < bucketTopics.length; i++) {
+              const topic = bucketTopics[i];
+              const dur = topic.durationMinutes || 45;
+              const chId = topic.chapterId || topic.chapterName || topic.subject;
+              const currentChMins = (day.chapterMinutes.get(chId) || 0) + forceDuration;
+
+              if (currentChMins + dur > 180) break;
+              const wouldExceedSubjectLimit = !day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3;
+              if (wouldExceedSubjectLimit) break;
+
+              forceChunk.push(topic);
+              forceDuration += dur;
+            }
+
+            if (forceChunk.length > 0) {
+              day.placedTopics.push(...forceChunk);
+              day.remainingCapacity -= forceDuration;
+              day.placedSubjects.add(bucket.subject);
+              day.placedChapters.add(bucket.chapterId);
+              day.lastSubject = bucket.subject;
+
+              const currentMins = day.chapterMinutes.get(bucket.chapterId) || 0;
+              day.chapterMinutes.set(bucket.chapterId, currentMins + forceDuration);
+
+              bucketTopics.splice(0, forceChunk.length);
+              placedSome = true;
             } else {
-              const countBest = bestDay.placedSubjects.size;
-              const countCurr = day.placedSubjects.size;
-              if (countCurr < countBest) {
-                bestDay = day;
-              } else if (countCurr === countBest) {
-                const workloadBest = dailyCapacityMinutes - bestDay.remainingCapacity;
-                const workloadCurr = dailyCapacityMinutes - day.remainingCapacity;
-                if (workloadCurr < workloadBest) {
-                  bestDay = day;
+              // Try any day from 1..numDays
+              let fallbackDayFound = false;
+              for (let fd = 1; fd <= numDays; fd++) {
+                const fday = dayStates[fd];
+                const hasSubjectOrSlot = fday.placedSubjects.has(bucket.subject) || fday.placedSubjects.size < 3;
+                if (hasSubjectOrSlot) {
+                  const fChunk: SyllabusItem[] = [];
+                  let fDuration = 0;
+                  for (let i = 0; i < bucketTopics.length; i++) {
+                    const topic = bucketTopics[i];
+                    const dur = topic.durationMinutes || 45;
+                    const chId = topic.chapterId || topic.chapterName || topic.subject;
+                    const currentChMins = (fday.chapterMinutes.get(chId) || 0) + fDuration;
+
+                    if (currentChMins + dur > 180) break;
+
+                    fChunk.push(topic);
+                    fDuration += dur;
+                  }
+
+                  if (fChunk.length > 0) {
+                    fday.placedTopics.push(...fChunk);
+                    fday.remainingCapacity -= fDuration;
+                    fday.placedSubjects.add(bucket.subject);
+                    fday.placedChapters.add(bucket.chapterId);
+                    fday.lastSubject = bucket.subject;
+
+                    const currentMins = fday.chapterMinutes.get(bucket.chapterId) || 0;
+                    fday.chapterMinutes.set(bucket.chapterId, currentMins + fDuration);
+
+                    bucketTopics.splice(0, fChunk.length);
+                    placedSome = true;
+                    fallbackDayFound = true;
+                    break;
+                  }
                 }
               }
+
+              if (!fallbackDayFound) {
+                // Last absolute fallback: Day 1
+                const fday = dayStates[1];
+                const t = bucketTopics[0];
+                const dur = t.durationMinutes || 45;
+                fday.placedTopics.push(t);
+                fday.remainingCapacity -= dur;
+                fday.placedSubjects.add(bucket.subject);
+                fday.placedChapters.add(bucket.chapterId);
+                fday.lastSubject = bucket.subject;
+                
+                bucketTopics.splice(0, 1);
+                placedSome = true;
+              }
             }
+            break;
           }
         }
       }
 
-      // If still no day found (which is theoretically impossible unless numDays is 0 or all days have 3 different subjects none of which is topic.subject),
-      // we fallback to the currentDayForLeftover day as absolute last resort
-      if (!bestDay) {
-        bestDay = dayStates[currentDayForLeftover];
+      if (!placedSome) {
+        if (currentDayNum < numDays) {
+          currentDayNum++;
+        } else {
+          // Force consume first topic to guarantee termination
+          const day = dayStates[numDays];
+          const t = bucketTopics[0];
+          const dur = t.durationMinutes || 45;
+          day.placedTopics.push(t);
+          day.remainingCapacity -= dur;
+          day.placedSubjects.add(t.subject);
+          day.placedChapters.add(bucket.chapterId);
+          day.lastSubject = t.subject;
+          bucketTopics.splice(0, 1);
+        }
       }
-
-      const dur = topic.durationMinutes || 45;
-      bestDay.placedTopics.push(topic);
-      bestDay.remainingCapacity -= dur;
-      bestDay.placedSubjects.add(topic.subject);
-      bestDay.placedChapters.add(topic.chapterId || topic.chapterName || topic.subject);
-      bestDay.lastSubject = topic.subject;
-      
-      const chId = topic.chapterId || topic.chapterName || topic.subject;
-      const currentMins = bestDay.chapterMinutes.get(chId) || 0;
-      bestDay.chapterMinutes.set(chId, currentMins + dur);
-      
-      placed = true;
-      currentDayForLeftover = (bestDay.dayNumber % numDays) + 1;
     }
   }
 
   // Phase 3: validation and warnings
   // 1. Total minutes > numDays * dailyCapacityMinutes
-  const totalMinutes = topics.reduce((sum, t) => sum + (t.durationMinutes || 45), 0);
+  const totalMinutes = topics.reduce((sum: number, t: SyllabusItem) => sum + (t.durationMinutes || 45), 0);
   if (totalMinutes > numDays * dailyCapacityMinutes) {
     warnings.push(
       `Plan cannot fit even at full capacity (Total ${totalMinutes} mins needed, total target window capacity is ${numDays * dailyCapacityMinutes} mins).`
@@ -325,7 +261,7 @@ export function buildStrategicRoutine(options: {
   // 2. Any day exceeding capacity
   for (let d = 1; d <= numDays; d++) {
     const day = dayStates[d];
-    const totalDayMins = day.placedTopics.reduce((sum, t) => sum + (t.durationMinutes || 45), 0);
+    const totalDayMins = day.placedTopics.reduce((sum: number, t: SyllabusItem) => sum + (t.durationMinutes || 45), 0);
     if (totalDayMins > dailyCapacityMinutes) {
       warnings.push(`Day ${d} exceeds target capacity because the total workload exceeds available prep window limits.`);
     }
@@ -377,7 +313,7 @@ export function buildStrategicRoutine(options: {
     const dayCards: BoardCard[] = [];
     let cardIndex = 1;
     dayGroupsMap.forEach((group) => {
-      const cardTotalMins = group.topics.reduce((sum, t) => sum + (t.durationMinutes || 45), 0);
+      const cardTotalMins = group.topics.reduce((sum: number, t: SyllabusItem) => sum + (t.durationMinutes || 45), 0);
       const boardTopics: BoardTopic[] = group.topics.map((t) => ({
         id: t.id,
         title: t.title,
