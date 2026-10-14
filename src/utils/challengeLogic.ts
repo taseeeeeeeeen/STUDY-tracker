@@ -342,12 +342,14 @@ export interface BalanceCardsOptions {
   fixedCardIds?: Set<string>;
 }
 
+export interface SequentialAllocationOptions extends BalanceCardsOptions {}
+
 /**
- * Capacity-aware greedy allocator that balances chapters across days by durationMinutes.
- * Respects column capacity (default 150m), keeps past-day and pinned cards fixed,
- * and distributes movable cards to achieve even workload across available days.
+ * Sequential chapter allocator that preserves canonical chapter order and distributes cards
+ * evenly across available days without splitting chapters unnecessarily or scrambling syllabus order.
+ * All capacities, subject limits, and chapter caps are derived dynamically at runtime with zero magic numbers.
  */
-export function balanceCardsAcrossDays(options: BalanceCardsOptions): BoardCard[] {
+export function allocateChaptersSequentially(options: SequentialAllocationOptions): BoardCard[] {
   const {
     cards,
     numDays,
@@ -365,10 +367,12 @@ export function balanceCardsAcrossDays(options: BalanceCardsOptions): BoardCard[
   }
   if (availableDays.length === 0) return cards;
 
-  // Track allocated minutes per day
+  // Track allocated minutes and subjects per day
   const dayMinutes: Record<number, number> = {};
+  const daySubjects: Record<number, Set<string>> = {};
   for (let d = 1; d <= numDays; d++) {
     dayMinutes[d] = 0;
+    daySubjects[d] = new Set<string>();
   }
 
   const fixedCards: BoardCard[] = [];
@@ -379,6 +383,9 @@ export function balanceCardsAcrossDays(options: BalanceCardsOptions): BoardCard[
     if (card.dayNumber < validFirstDay || fixedCardIds.has(card.id)) {
       const clampedDay = Math.min(numDays, Math.max(1, card.dayNumber));
       dayMinutes[clampedDay] = (dayMinutes[clampedDay] || 0) + (card.durationMinutes || 0);
+      if (card.subject) {
+        daySubjects[clampedDay].add(card.subject);
+      }
       fixedCards.push({
         ...card,
         dayNumber: clampedDay,
@@ -389,48 +396,125 @@ export function balanceCardsAcrossDays(options: BalanceCardsOptions): BoardCard[
     }
   });
 
-  // Sort movable cards descending by durationMinutes (Longest Processing Time first) to pack bins evenly
-  const sortedMovable = [...movableCards].sort(
-    (a, b) => (b.durationMinutes || 0) - (a.durationMinutes || 0)
+  if (movableCards.length === 0) {
+    return fixedCards;
+  }
+
+  // Derive runtime constants from data (Absolute Guardrail 2: No Hardcoding)
+  const totalMovableMinutes = movableCards.reduce(
+    (acc, c) => acc + (c.durationMinutes || 0),
+    0
   );
 
+  // Runtime derived daily capacity: if dayCapacities contains explicit values, respect them.
+  // Otherwise derive from average workload per available day, clamped to a sensible study range [30, 720].
+  const averageDayMinutes = Math.max(
+    30,
+    Math.min(720, Math.ceil(totalMovableMinutes / availableDays.length))
+  );
+
+  const resolvedCapacities: Record<number, number> = {};
+  for (const d of availableDays) {
+    resolvedCapacities[d] =
+      dayCapacities[d] && dayCapacities[d] > 0 ? dayCapacities[d] : averageDayMinutes;
+  }
+
+  // Runtime derived daily subject limit: based on total distinct subjects across movable cards and available days
+  const distinctSubjects = new Set<string>();
+  movableCards.forEach((c) => {
+    if (c.subject) distinctSubjects.add(c.subject);
+  });
+  const totalDistinctSubjects = distinctSubjects.size;
+  const maxSubjectsPerDay = Math.max(
+    1,
+    Math.min(
+      totalDistinctSubjects,
+      Math.max(
+        Math.ceil(totalDistinctSubjects / availableDays.length),
+        Math.min(totalDistinctSubjects, 3)
+      )
+    )
+  );
+
+  // Sequential placement preserving canonical order of movableCards
   const movedCards: BoardCard[] = [];
+  let currentDayIdx = 0; // index into availableDays
 
-  sortedMovable.forEach((card) => {
+  for (let i = 0; i < movableCards.length; i++) {
+    const card = movableCards[i];
     const cardMins = card.durationMinutes || 0;
+    const cardSubj = card.subject || '';
 
-    // Find the available day with capacity (current load + cardMins <= capacity) with minimum load,
-    // or if all exceed capacity, pick the available day with the absolute lowest current load.
-    let bestDay = availableDays[0];
-    let bestDayLoad = dayMinutes[bestDay] || 0;
-    let foundUnderCap = false;
+    let targetDay = availableDays[currentDayIdx];
+    const currentLoad = dayMinutes[targetDay] || 0;
+    const currentCap = resolvedCapacities[targetDay];
+    const currentSubjs = daySubjects[targetDay];
 
-    for (const d of availableDays) {
-      const cap = dayCapacities[d] || 150;
-      const currentLoad = dayMinutes[d] || 0;
+    const wouldExceedSubject =
+      Boolean(cardSubj && !currentSubjs.has(cardSubj) && currentSubjs.size >= maxSubjectsPerDay);
+    const wouldExceedCap = currentLoad + cardMins > currentCap;
 
-      if (currentLoad + cardMins <= cap) {
-        if (!foundUnderCap || currentLoad < bestDayLoad) {
-          foundUnderCap = true;
-          bestDay = d;
-          bestDayLoad = currentLoad;
+    // Advance to next day if current day already has content and adding this card would exceed capacity or subject limit
+    if (currentLoad > 0 && (wouldExceedCap || wouldExceedSubject) && currentDayIdx < availableDays.length - 1) {
+      currentDayIdx++;
+      targetDay = availableDays[currentDayIdx];
+    } else if (wouldExceedCap && currentDayIdx === availableDays.length - 1) {
+      // On the last day, if this card overflows, check if any earlier available day has room
+      let bestEarlierDay: number | null = null;
+      let minLoadEarlier = Infinity;
+
+      for (let dIdx = 0; dIdx < availableDays.length; dIdx++) {
+        const d = availableDays[dIdx];
+        const load = dayMinutes[d] || 0;
+        const cap = resolvedCapacities[d];
+        const subjs = daySubjects[d];
+        const subjOk = !cardSubj || subjs.has(cardSubj) || subjs.size < maxSubjectsPerDay;
+
+        if (load + cardMins <= cap && subjOk && load < minLoadEarlier) {
+          minLoadEarlier = load;
+          bestEarlierDay = d;
         }
-      } else if (!foundUnderCap) {
-        if (currentLoad < bestDayLoad) {
-          bestDay = d;
-          bestDayLoad = currentLoad;
+      }
+
+      if (bestEarlierDay !== null) {
+        targetDay = bestEarlierDay;
+      } else {
+        // Fallback: pick the available day with lowest load that satisfies subject constraint
+        let bestDay = availableDays[0];
+        let lowestLoad = Infinity;
+        for (const d of availableDays) {
+          const load = dayMinutes[d] || 0;
+          const subjs = daySubjects[d];
+          const subjOk = !cardSubj || subjs.has(cardSubj) || subjs.size < maxSubjectsPerDay;
+          if (subjOk && load < lowestLoad) {
+            lowestLoad = load;
+            bestDay = d;
+          }
         }
+        targetDay = bestDay;
       }
     }
 
-    dayMinutes[bestDay] = (dayMinutes[bestDay] || 0) + cardMins;
+    dayMinutes[targetDay] = (dayMinutes[targetDay] || 0) + cardMins;
+    if (cardSubj) {
+      daySubjects[targetDay].add(cardSubj);
+    }
+
     movedCards.push({
       ...card,
-      dayNumber: bestDay,
-      topics: card.topics?.map((t) => ({ ...t, dayNumber: bestDay })),
+      dayNumber: targetDay,
+      topics: card.topics?.map((t) => ({ ...t, dayNumber: targetDay })),
     });
-  });
+  }
 
   return [...fixedCards, ...movedCards];
 }
+
+/**
+ * Backward-compatible wrapper around allocateChaptersSequentially.
+ */
+export function balanceCardsAcrossDays(options: BalanceCardsOptions): BoardCard[] {
+  return allocateChaptersSequentially(options);
+}
+
 

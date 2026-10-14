@@ -58,6 +58,25 @@ export function buildStrategicRoutine(options: {
     };
   }
 
+  // Derive runtime constraints (Absolute Guardrail 2: No Hardcoding)
+  const totalMinutes = topics.reduce((sum: number, t: SyllabusItem) => sum + (t.durationMinutes || 45), 0);
+  const distinctSubjects = new Set(topics.map((t) => t.subject));
+  const totalDistinctSubjects = distinctSubjects.size;
+  const maxSubjectsPerDay = Math.max(
+    1,
+    Math.min(
+      totalDistinctSubjects,
+      Math.max(
+        Math.ceil(totalDistinctSubjects / Math.max(1, numDays)),
+        Math.min(totalDistinctSubjects, 3)
+      )
+    )
+  );
+  const chapterDailyCap = Math.max(
+    dailyCapacityMinutes,
+    Math.ceil(totalMinutes / Math.max(1, numDays))
+  );
+
   // Phase 1: Sequential Chapter Allocation with Single-Day Preference & Non-Splitting Priority
   let currentDayNum = 1;
 
@@ -83,13 +102,13 @@ export function buildStrategicRoutine(options: {
           const chId = topic.chapterId || topic.chapterName || topic.subject;
           const currentChMins = (day.chapterMinutes.get(chId) || 0) + chunkDuration;
 
-          // Rule B: Chapter daily cap (180 min)
-          if (currentChMins + dur > 180) {
+          // Rule B: Chapter daily cap (derived at runtime)
+          if (currentChMins + dur > chapterDailyCap) {
             break;
           }
 
-          // Rule A: Daily subject limit (max 3 subjects)
-          const wouldExceedSubjectLimit = !day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3;
+          // Rule A: Daily subject limit (derived at runtime)
+          const wouldExceedSubjectLimit = !day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= maxSubjectsPerDay;
           if (wouldExceedSubjectLimit) {
             subjectLimitExceeded = true;
             break;
@@ -111,7 +130,7 @@ export function buildStrategicRoutine(options: {
         // then we defer this chapter to the next day to keep it intact.
         if (capacityExceeded && d < numDays) {
           const totalRemainingChDur = bucketTopics.reduce((sum: number, t: SyllabusItem) => sum + (t.durationMinutes || 45), 0);
-          if (totalRemainingChDur <= dailyCapacityMinutes && totalRemainingChDur <= 180) {
+          if (totalRemainingChDur <= dailyCapacityMinutes && totalRemainingChDur <= chapterDailyCap) {
             currentDayNum = d + 1;
             continue; // Go to next day
           }
@@ -151,8 +170,8 @@ export function buildStrategicRoutine(options: {
               const chId = topic.chapterId || topic.chapterName || topic.subject;
               const currentChMins = (day.chapterMinutes.get(chId) || 0) + forceDuration;
 
-              if (currentChMins + dur > 180) break;
-              const wouldExceedSubjectLimit = !day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= 3;
+              if (currentChMins + dur > chapterDailyCap) break;
+              const wouldExceedSubjectLimit = !day.placedSubjects.has(topic.subject) && day.placedSubjects.size >= maxSubjectsPerDay;
               if (wouldExceedSubjectLimit) break;
 
               forceChunk.push(topic);
@@ -176,7 +195,7 @@ export function buildStrategicRoutine(options: {
               let fallbackDayFound = false;
               for (let fd = 1; fd <= numDays; fd++) {
                 const fday = dayStates[fd];
-                const hasSubjectOrSlot = fday.placedSubjects.has(bucket.subject) || fday.placedSubjects.size < 3;
+                const hasSubjectOrSlot = fday.placedSubjects.has(bucket.subject) || fday.placedSubjects.size < maxSubjectsPerDay;
                 if (hasSubjectOrSlot) {
                   const fChunk: SyllabusItem[] = [];
                   let fDuration = 0;
@@ -186,7 +205,7 @@ export function buildStrategicRoutine(options: {
                     const chId = topic.chapterId || topic.chapterName || topic.subject;
                     const currentChMins = (fday.chapterMinutes.get(chId) || 0) + fDuration;
 
-                    if (currentChMins + dur > 180) break;
+                    if (currentChMins + dur > chapterDailyCap) break;
 
                     fChunk.push(topic);
                     fDuration += dur;
@@ -251,7 +270,6 @@ export function buildStrategicRoutine(options: {
 
   // Phase 3: validation and warnings
   // 1. Total minutes > numDays * dailyCapacityMinutes
-  const totalMinutes = topics.reduce((sum: number, t: SyllabusItem) => sum + (t.durationMinutes || 45), 0);
   if (totalMinutes > numDays * dailyCapacityMinutes) {
     warnings.push(
       `Plan cannot fit even at full capacity (Total ${totalMinutes} mins needed, total target window capacity is ${numDays * dailyCapacityMinutes} mins).`

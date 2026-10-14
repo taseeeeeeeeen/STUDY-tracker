@@ -75,7 +75,7 @@ export const ShiftTopicModal: React.FC<ShiftTopicModalProps> = ({
   const targetCards = cards.filter((c) => c.dayNumber === selectedDay && c.id !== card?.id);
   const targetCurrentMins = targetCards.reduce((sum, c) => sum + c.durationMinutes, 0);
   const targetCol = columns.find((c) => c.dayNumber === selectedDay);
-  const targetCapacity = targetCol?.capacityMinutes || 150;
+  const targetCapacity = targetCol?.capacityMinutes || columns[0]?.capacityMinutes || 120;
   const projectedTotal = targetCurrentMins + movingMinutes;
   const isOverCapacity = projectedTotal > targetCapacity;
 

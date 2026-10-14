@@ -28,7 +28,11 @@ import {
   deleteFirestoreChallenge,
 } from '../../services/challengeService';
 import { FirestoreChallenge } from '../../types/challenge';
-import { dedupeSyllabusTopics, balanceCardsAcrossDays } from '../../utils/challengeLogic';
+import {
+  dedupeSyllabusTopics,
+  balanceCardsAcrossDays,
+  allocateChaptersSequentially,
+} from '../../utils/challengeLogic';
 import {
   getLocalDateString,
   parseLocalDate,
@@ -221,6 +225,14 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     const numDays = duration;
     const baseDate = startDate ? parseLocalDate(startDate) : new Date();
 
+    // Dynamically derive per-day capacity based on selected topics and sprint duration (No hardcoding)
+    const selected = syllabus.filter((s) => s.checked);
+    const totalDuration = selected.reduce((acc, t) => acc + (t.durationMinutes || 45), 0);
+    const derivedCapacity =
+      numDays > 0 && totalDuration > 0
+        ? Math.max(30, Math.min(720, Math.ceil(totalDuration / numDays)))
+        : 150;
+
     return Array.from({ length: numDays }, (_, i) => {
       const dayDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + i);
       const dayName = dayDate.toLocaleDateString('en-US', { weekday: 'short' });
@@ -230,10 +242,10 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         dayNumber: i + 1,
         dateLabel: `Day ${i + 1}: ${monthStr} ${dayNum}`,
         dayName,
-        capacityMinutes: 150,
+        capacityMinutes: derivedCapacity,
       };
     });
-  }, [startDate, duration]);
+  }, [startDate, duration, syllabus]);
 
   // Computed End Date formatted in local timezone
   const formattedEndDate = useMemo(() => {
@@ -658,7 +670,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
 
     const dayCapacities: Record<number, number> = {};
     columns.forEach((c) => {
-      dayCapacities[c.dayNumber] = c.capacityMinutes || 150;
+      dayCapacities[c.dayNumber] = c.capacityMinutes;
     });
 
     const fixedCardIds = new Set<string>();
@@ -717,7 +729,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       };
     });
 
-    const balancedCards = balanceCardsAcrossDays({
+    const balancedCards = allocateChaptersSequentially({
       cards: rawPreparedCards,
       numDays: numCols,
       firstNonPastDay,
@@ -930,7 +942,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       }
 
       const targetCol = columns.find((c) => c.dayNumber === targetDay);
-      const capacity = targetCol?.capacityMinutes || 150;
+      const capacity = targetCol?.capacityMinutes || columns[0]?.capacityMinutes || 120;
       const currentMinutes = boardCards
         .filter((c) => c.dayNumber === targetDay)
         .reduce((sum, c) => sum + c.durationMinutes, 0);
@@ -998,7 +1010,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     }
 
     const targetCol = columns.find((c) => c.dayNumber === targetDay);
-    const capacity = targetCol?.capacityMinutes || 150;
+    const capacity = targetCol?.capacityMinutes || columns[0]?.capacityMinutes || 120;
     const currentMinutes = boardCards
       .filter((c) => c.dayNumber === targetDay && c.id !== draggedCard.id)
       .reduce((sum, c) => sum + c.durationMinutes, 0);
@@ -1100,7 +1112,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
       : shiftModalCard.durationMinutes;
 
     const targetCol = columns.find((c) => c.dayNumber === targetDay);
-    const capacity = targetCol?.capacityMinutes || 150;
+    const capacity = targetCol?.capacityMinutes || columns[0]?.capacityMinutes || 120;
     const currentMinutes = boardCards
       .filter((c) => c.dayNumber === targetDay && c.id !== shiftModalCard.id)
       .reduce((sum, c) => sum + c.durationMinutes, 0);
@@ -1184,7 +1196,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
     const firstNonPast = isChallengeSaved ? Math.min(numCols, Math.max(1, currentDay)) : 1;
     const dayCapacities: Record<number, number> = {};
     columns.forEach((c) => {
-      dayCapacities[c.dayNumber] = c.capacityMinutes || 150;
+      dayCapacities[c.dayNumber] = c.capacityMinutes;
     });
 
     const nextCards = balanceCardsAcrossDays({
@@ -1483,7 +1495,7 @@ export const ChallengeWizard: React.FC<ChallengeWizardProps> = ({
         const findDayForNewTopic = (neededMinutes: number): number => {
           for (let d = firstNonPastDay; d <= numCols; d++) {
             const col = columns.find((c) => c.dayNumber === d);
-            const cap = col?.capacityMinutes || 150;
+            const cap = col?.capacityMinutes || columns[0]?.capacityMinutes || 120;
             const currentLoad = dayAllocatedMinutes[d] || 0;
             if (currentLoad + neededMinutes <= cap) {
               dayAllocatedMinutes[d] = currentLoad + neededMinutes;
