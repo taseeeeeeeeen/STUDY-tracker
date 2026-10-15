@@ -7,6 +7,95 @@ import { subscribeMasterSyllabus } from '../services/syllabusService';
 import { flattenAndDedupeMasterSyllabus } from '../utils/syllabusFlatten';
 import { buildStrategicRoutine } from '../utils/strategyPlannerLogic';
 import { getLocalDateString, parseLocalDate } from '../utils/dateUtils';
+import { buildAiPlanningPayload, AiPlanningPayload } from '../utils/aiPlanningPayload';
+import { generateAiRoutine } from '../services/aiRoutineService';
+import { getSubjectColor } from '../utils/uiHelpers';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+interface SortablePriorityChapterRowProps {
+  ch: {
+    chapterId: string;
+    chapterName: string;
+    subject: string;
+    totalMinutes: number;
+  };
+  idx: number;
+}
+
+const SortablePriorityChapterRow: React.FC<SortablePriorityChapterRowProps> = ({ ch, idx }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: ch.chapterId });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0.75 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center justify-between p-2.5 rounded-xl border border-gray-200 ${getSubjectColor(ch.subject)} ${
+        isDragging ? 'shadow-md ring-2 ring-[#003820]/30 scale-[1.01]' : ''
+      }`}
+    >
+      <div className="flex items-center gap-2.5 min-w-0">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing p-1 -ml-1 text-[#707971] hover:text-[#0b1c30] rounded hover:bg-black/5 flex items-center justify-center shrink-0 transition-colors"
+          style={{ touchAction: 'none' }}
+          aria-label={`Drag to reorder priority for ${ch.chapterName}`}
+          title="Drag to reorder"
+        >
+          <span className="material-symbols-outlined text-base">drag_indicator</span>
+        </button>
+        <span className="font-mono text-[10px] text-[#707971] w-4 text-right shrink-0">
+          {idx + 1}.
+        </span>
+        <span className="font-mono text-[10px] text-[#707971] uppercase truncate shrink-0 max-w-[100px]">
+          {ch.subject}
+        </span>
+        <span className="font-bold text-xs text-[#0b1c30] truncate">
+          {ch.chapterName}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className="font-mono text-[10px] text-[#707971]">
+          {ch.totalMinutes}m
+        </span>
+      </div>
+    </div>
+  );
+};
+
+
 
 export const StrategyPlannerPage: React.FC = () => {
   const navigate = useNavigate();
@@ -130,25 +219,166 @@ export const StrategyPlannerPage: React.FC = () => {
     [totalSelectedMinutes, durationDays]
   );
 
+  // --- CHUNK 1: PRIORITY MODE STATE & DERIVATIONS ---
+  const [isPriorityMode, setIsPriorityMode] = useState(false);
+  const [priorityChapterOrder, setPriorityChapterOrder] = useState<string[]>([]);
+  const [planPayload, setPlanPayload] = useState<AiPlanningPayload | null>(null);
+
+  // Derive the selected-chapter list (Step 1.2)
+  const selectedChapters = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        chapterId: string;
+        chapterName: string;
+        subject: string;
+        topics: SyllabusItem[];
+        totalMinutes: number;
+      }
+    >();
+
+    selectedTopics.forEach((topic) => {
+      const chId = topic.chapterId || topic.chapterName || topic.subject;
+      const chName = topic.chapterName || topic.title || topic.subject;
+      const dur = topic.durationMinutes || 45;
+      const existing = map.get(chId);
+      if (!existing) {
+        map.set(chId, {
+          chapterId: chId,
+          chapterName: chName,
+          subject: topic.subject,
+          topics: [topic],
+          totalMinutes: dur,
+        });
+      } else {
+        existing.topics.push(topic);
+        existing.totalMinutes += dur;
+      }
+    });
+
+    return Array.from(map.values());
+  }, [selectedTopics]);
+
+  // Derive orderedSelectedChapters (Step 1.2)
+  const orderedSelectedChapters = useMemo(() => {
+    if (!isPriorityMode) {
+      return selectedChapters;
+    }
+    return [...selectedChapters].sort((a, b) => {
+      const indexA = priorityChapterOrder.indexOf(a.chapterId);
+      const indexB = priorityChapterOrder.indexOf(b.chapterId);
+      if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+      if (indexA !== -1) return -1;
+      if (indexB !== -1) return 1;
+      return 0;
+    });
+  }, [selectedChapters, isPriorityMode, priorityChapterOrder]);
+
+  // Synchronize membership (Step 1.2)
+  useEffect(() => {
+    setPriorityChapterOrder((prev) => {
+      const activeChapterIds = new Set(selectedChapters.map((c) => c.chapterId));
+      const kept = prev.filter((id) => activeChapterIds.has(id));
+      const keptSet = new Set(kept);
+
+      const added: string[] = [];
+      selectedChapters.forEach((c) => {
+        if (!keptSet.has(c.chapterId)) {
+          added.push(c.chapterId);
+        }
+      });
+
+      const next = [...kept, ...added];
+      if (
+        next.length === prev.length &&
+        next.every((id, idx) => id === prev[idx])
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [selectedChapters]);
+
+  // Sensors & handler for Priority Mode drag-and-drop
+  const prioritySensors = useSensors(
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 3,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 100,
+        tolerance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handlePriorityDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setPriorityChapterOrder((prev) => {
+        const currentOrder = orderedSelectedChapters.map((c) => c.chapterId);
+        const oldIndex = currentOrder.indexOf(String(active.id));
+        const newIndex = currentOrder.indexOf(String(over.id));
+        if (oldIndex !== -1 && newIndex !== -1) {
+          return arrayMove(currentOrder, oldIndex, newIndex);
+        }
+        return prev;
+      });
+    }
+  };
+
   // --- STEP 3 STATE: Generated Strategic Plan ---
   const [dayWisePlan, setDayWisePlan] = useState<Record<string, BoardCard[]>>({});
   const [planWarnings, setPlanWarnings] = useState<string[]>([]);
   const [planGenerated, setPlanGenerated] = useState(false);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
 
-  // Group selected topics by chapter & distribute using buildStrategicRoutine
-  const generatePlan = () => {
-    if (selectedTopics.length === 0 || durationDays <= 0) return;
+  // Group selected topics by chapter & distribute using generateAiRoutine (Gemini AI Engine with offline fallback)
+  const generatePlan = async () => {
+    if (selectedTopics.length === 0 || durationDays <= 0 || isGeneratingPlan) return;
 
-    const { allocation, warnings } = buildStrategicRoutine({
-      topics: selectedTopics,
-      numDays: durationDays,
-      dailyCapacityMinutes: capacityMinutes,
+    setIsGeneratingPlan(true);
+
+    const payload = buildAiPlanningPayload({
+      prepStartDate,
+      lastPrepDateString,
+      durationDays,
+      capacityMinutes,
+      isPriorityMode,
+      selectedTopics,
+      priorityChapterOrder,
     });
+    setPlanPayload(payload);
 
-    setDayWisePlan(allocation);
-    setPlanWarnings(warnings);
-    setPlanGenerated(true);
-    setCurrentStep(3);
+    try {
+      const result = await generateAiRoutine(payload);
+      setDayWisePlan(result.allocation);
+      setPlanWarnings(result.warnings);
+      setPlanGenerated(true);
+      setCurrentStep(3);
+    } catch (err) {
+      console.error('Failed to generate plan:', err);
+      // Fallback to deterministic algorithm if error occurs
+      const { allocation, warnings } = buildStrategicRoutine({
+        topics: selectedTopics,
+        numDays: durationDays,
+        dailyCapacityMinutes: capacityMinutes,
+        ...(isPriorityMode && priorityChapterOrder.length > 0
+          ? { priorityChapterOrder }
+          : {}),
+      });
+      setDayWisePlan(allocation);
+      setPlanWarnings(warnings);
+      setPlanGenerated(true);
+      setCurrentStep(3);
+    } finally {
+      setIsGeneratingPlan(false);
+    }
   };
 
   // Import to Challenge Wizard handler
@@ -165,6 +395,7 @@ export const StrategyPlannerPage: React.FC = () => {
           dailyCapacityMinutes: capacityMinutes,
           dayWiseAllocation: dayWisePlan,
           selectedTopicIds: selectedTopics.map((t) => t.id),
+          payload: planPayload,
         },
       },
     });
@@ -475,6 +706,50 @@ export const StrategyPlannerPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Priority Mode Card (Step 1.3) */}
+          <div className="bg-white rounded-2xl border border-[#c0c9c0]/30 shadow-xs p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-lg text-[#003820]">checklist</span>
+                <span className="font-bold text-xs text-[#0b1c30]">Priority Mode</span>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isPriorityMode}
+                  onChange={(e) => setIsPriorityMode(e.target.checked)}
+                  className="rounded border-[#c0c9c0] text-[#003820] focus:ring-[#003820] cursor-pointer"
+                />
+              </label>
+            </div>
+
+            {isPriorityMode && selectedTopics.length > 0 && (
+              <div className="mt-3 space-y-2.5 pt-3 border-t border-[#e2e8f0]">
+                <p className="text-[10px] text-[#707971]">Top of this list = studied first.</p>
+                <DndContext
+                  sensors={prioritySensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handlePriorityDragEnd}
+                >
+                  <SortableContext
+                    items={orderedSelectedChapters.map((c) => c.chapterId)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-1.5">
+                      {orderedSelectedChapters.map((ch, idx) => (
+                        <SortablePriorityChapterRow
+                          key={ch.chapterId}
+                          ch={ch}
+                          idx={idx}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              </div>
+            )}
+          </div>
+
           {/* Filter Bar & Quick Select Controls */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-[#c0c9c0]/30 shadow-xs">
             {/* Subject Filters */}
@@ -725,6 +1000,13 @@ export const StrategyPlannerPage: React.FC = () => {
             </div>
           )}
 
+          {/* Centered loader-card during plan generation */}
+          {isGeneratingPlan && (
+            <div className="p-12 text-center text-[#707971] text-xs font-mono bg-white rounded-3xl border border-gray-100 animate-pulse">
+              Generating AI-balanced routine...
+            </div>
+          )}
+
           {/* Bottom Navigation Controls */}
           <div className="p-4 bg-white rounded-2xl border border-[#c0c9c0]/40 shadow-xs flex items-center justify-between">
             <button
@@ -738,12 +1020,12 @@ export const StrategyPlannerPage: React.FC = () => {
 
             <button
               type="button"
-              disabled={selectedTopics.length === 0}
+              disabled={selectedTopics.length === 0 || isGeneratingPlan}
               onClick={generatePlan}
               className="px-6 py-2.5 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span>Generate Strategic Plan ({selectedTopics.length} topics)</span>
-              <span className="material-symbols-outlined text-sm">insights</span>
+              <span>{isGeneratingPlan ? 'Generating Strategic Plan...' : `Generate Strategic Plan (${selectedTopics.length} topics)`}</span>
+              <span className="material-symbols-outlined text-sm">{isGeneratingPlan ? 'progress_activity' : 'insights'}</span>
             </button>
           </div>
         </div>
@@ -832,13 +1114,21 @@ export const StrategyPlannerPage: React.FC = () => {
 
             <button
               type="button"
+              disabled={isGeneratingPlan}
               onClick={generatePlan}
-              className="px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5"
+              className="px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span className="material-symbols-outlined text-sm">refresh</span>
-              <span>Re-balance Workload</span>
+              <span className="material-symbols-outlined text-sm">{isGeneratingPlan ? 'progress_activity' : 'refresh'}</span>
+              <span>{isGeneratingPlan ? 'Re-balancing...' : 'Re-balance Workload'}</span>
             </button>
           </div>
+
+          {/* Centered loader-card during plan generation */}
+          {isGeneratingPlan && (
+            <div className="p-12 text-center text-[#707971] text-xs font-mono bg-white rounded-3xl border border-gray-100 animate-pulse">
+              Generating AI-balanced routine...
+            </div>
+          )}
 
           {/* Day-by-Day Columns View */}
           <div className="space-y-3">

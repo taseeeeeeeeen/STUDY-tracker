@@ -46,3 +46,11 @@ export interface DayColumnData {
   dayName: string;
   capacityMinutes: number;
 }
+
+export interface ChapterPriorityEntry {
+  chapterId: string;
+  chapterName: string;
+  subject: string;
+  totalMinutes?: number;
+  topicCount?: number;
+}
