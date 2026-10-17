@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { HSCProgressSummary } from '../../types/hsc';
+import { HSCProgressSummary, HSCSubjectProgress } from '../../types/hsc';
+import { useStudyTrack } from '../../context/StudyTrackContext';
 
 interface HSCHeroDonutsProps {
   summary: HSCProgressSummary;
@@ -46,6 +47,94 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
     return { grade: 'F', gpa: 0.0 };
   };
   const { grade, gpa } = getGradeAndGPA(grandProgressPercent);
+
+  // Group Progress Logic
+  type GroupFilterType = 'science' | 'core' | 'custom';
+  const [groupFilter, setGroupFilter] = useState<GroupFilterType>('science');
+  const [customSelectedIds, setCustomSelectedIds] = useState<string[]>([]);
+  const [isCustomExpanded, setIsCustomExpanded] = useState<boolean>(false);
+
+  const { hscMasterSyllabus } = useStudyTrack();
+
+  const allSubjectsList: HSCSubjectProgress[] = useMemo(() => {
+    if (summary.perSubject && summary.perSubject.length > 0) {
+      return summary.perSubject;
+    }
+    if (hscMasterSyllabus && hscMasterSyllabus.length > 0) {
+      return hscMasterSyllabus.map((sub) => {
+        const subTopics = sub.chapters.flatMap((c) => c.topics);
+        const total = subTopics.length;
+        const compTheory = subTopics.filter((t) => t.is_theory_done).length;
+        const compPractice = subTopics.filter((t) => t.is_practice_done).length;
+        const compBoth = subTopics.filter((t) => t.is_theory_done && t.is_practice_done).length;
+        const pct = total > 0 ? ((compTheory + compPractice) / (total * 2)) * 100 : 0;
+        return {
+          id: sub.id,
+          name: sub.name,
+          totalTopics: total,
+          completedTopicsCount: compBoth,
+          completedTheoryCount: compTheory,
+          completedPracticeCount: compPractice,
+          progressPercent: pct,
+          paperType: sub.paperType,
+          icon: sub.icon,
+        };
+      });
+    }
+    return [];
+  }, [summary.perSubject, hscMasterSyllabus]);
+
+  const isScienceSubject = (name: string): boolean => {
+    const lower = name.toLowerCase();
+    return (
+      lower.includes('physics') ||
+      lower.includes('chemistry') ||
+      lower.includes('math') ||
+      lower.includes('biology') ||
+      name.includes('ফিজিক্স') ||
+      name.includes('কেমিস্ট্রি') ||
+      name.includes('গণিত') ||
+      name.includes('ম্যাথ') ||
+      name.includes('জীব')
+    );
+  };
+
+  const isCoreSubject = (name: string): boolean => {
+    const lower = name.toLowerCase();
+    return (
+      lower.includes('bangla') ||
+      lower.includes('english') ||
+      lower.includes('ict') ||
+      name.includes('বাংলা') ||
+      name.includes('ইংরেজি') ||
+      name.includes('তথ্য')
+    );
+  };
+
+  const filteredSubjects: HSCSubjectProgress[] = useMemo(() => {
+    if (groupFilter === 'science') {
+      return allSubjectsList.filter((s) => isScienceSubject(s.name));
+    }
+    if (groupFilter === 'core') {
+      return allSubjectsList.filter((s) => isCoreSubject(s.name));
+    }
+    // 'custom'
+    if (customSelectedIds.length === 0) {
+      return allSubjectsList;
+    }
+    return allSubjectsList.filter((s) => customSelectedIds.includes(s.id));
+  }, [groupFilter, allSubjectsList, customSelectedIds]);
+
+  const groupTotalTopics = filteredSubjects.reduce((sum, s) => sum + s.totalTopics, 0);
+  const groupCompletedTheory = filteredSubjects.reduce((sum, s) => sum + s.completedTheoryCount, 0);
+  const groupCompletedPractice = filteredSubjects.reduce((sum, s) => sum + s.completedPracticeCount, 0);
+  const groupCompletedBoth = filteredSubjects.reduce((sum, s) => sum + s.completedTopicsCount, 0);
+
+  // Group Progress % = ((Total Completed Theory + Total Completed Practice) / (Total Topics * 2)) * 100
+  const groupProgressPercent =
+    groupTotalTopics > 0
+      ? ((groupCompletedTheory + groupCompletedPractice) / (groupTotalTopics * 2)) * 100
+      : 0;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
@@ -297,50 +386,224 @@ export const HSCHeroDonuts: React.FC<HSCHeroDonutsProps> = ({ summary }) => {
         </div>
       </div>
 
-      {/* Right Complementary Card: Board Exam Readiness (4 cols) */}
+      {/* Right Complementary Card: Subject Group Progress (4 cols) */}
       <div className="lg:col-span-4 bg-white rounded-2xl p-6 sm:p-8 shadow-xs border border-[#c0c9c0]/30 flex flex-col justify-between">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] text-[#404942] uppercase tracking-wider font-semibold font-mono">
-              Estimated Readiness
+            <span className="text-[11px] text-[#006c49] uppercase tracking-wider font-semibold font-mono">
+              Group Progress
             </span>
-            <span className="bg-[#eff4ff] text-[#003820] px-2 py-0.5 rounded text-[11px] font-semibold border border-[#c0c9c0]/30 font-mono">
-              HSC Standard
+            <span className="bg-[#eff4ff] text-[#003820] px-2 py-0.5 rounded text-[10px] font-semibold border border-[#c0c9c0]/30 font-mono">
+              {filteredSubjects.length} {filteredSubjects.length === 1 ? 'Subject' : 'Subjects'}
             </span>
           </div>
-          <h2 className="text-lg text-[#0b1c30] font-bold">Board Exam Readiness</h2>
-          <p className="text-xs text-[#404942]">
-            Based on your syllabus completion and practice question coverage.
-          </p>
+
+          <div>
+            <h2 className="text-lg text-[#0b1c30] font-bold">Subject Group Progress</h2>
+            <p className="text-xs text-[#404942] mt-0.5">
+              Curriculum tracking by academic track or custom subject selection.
+            </p>
+          </div>
+
+          {/* Segmented Filter Control */}
+          <div className="mt-1 flex items-center p-1 bg-[#eff4ff] rounded-xl border border-[#c0c9c0]/30 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setGroupFilter('science');
+                setIsCustomExpanded(false);
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-lg font-semibold transition-all text-center cursor-pointer ${
+                groupFilter === 'science'
+                  ? 'bg-[#003820] text-white shadow-xs'
+                  : 'text-[#404942] hover:text-[#0b1c30]'
+              }`}
+            >
+              Science
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setGroupFilter('core');
+                setIsCustomExpanded(false);
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-lg font-semibold transition-all text-center cursor-pointer ${
+                groupFilter === 'core'
+                  ? 'bg-[#003820] text-white shadow-xs'
+                  : 'text-[#404942] hover:text-[#0b1c30]'
+              }`}
+            >
+              Core Subjects
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setGroupFilter('custom');
+                setIsCustomExpanded((prev) => !prev);
+              }}
+              className={`flex-1 py-1.5 px-2 rounded-lg font-semibold transition-all text-center cursor-pointer flex items-center justify-center gap-1 ${
+                groupFilter === 'custom'
+                  ? 'bg-[#003820] text-white shadow-xs'
+                  : 'text-[#404942] hover:text-[#0b1c30]'
+              }`}
+            >
+              <span>Custom</span>
+              <span className="material-symbols-outlined text-[14px]">
+                {groupFilter === 'custom' && isCustomExpanded ? 'expand_less' : 'tune'}
+              </span>
+            </button>
+          </div>
+
+          {/* Custom Subject Picker Checklist */}
+          {groupFilter === 'custom' && isCustomExpanded && (
+            <div className="mt-1 p-3 bg-white rounded-xl border border-[#c0c9c0]/40 shadow-xs space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
+              <div className="flex items-center justify-between text-[11px] pb-1 border-b border-gray-100">
+                <span className="font-semibold text-[#0b1c30]">Select Subjects</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCustomSelectedIds(allSubjectsList.map((s) => s.id))}
+                    className="text-[#006c49] hover:underline cursor-pointer font-medium"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-gray-300">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setCustomSelectedIds([])}
+                    className="text-[#707971] hover:underline cursor-pointer font-medium"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                {allSubjectsList.map((s) => {
+                  const isChecked =
+                    customSelectedIds.length === 0 || customSelectedIds.includes(s.id);
+                  return (
+                    <label
+                      key={s.id}
+                      className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-gray-50 text-xs cursor-pointer select-none"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setCustomSelectedIds((prev) =>
+                                prev.length === 0 ? [s.id] : [...prev, s.id]
+                              );
+                            } else {
+                              const currentSelected =
+                                customSelectedIds.length === 0
+                                  ? allSubjectsList.map((sub) => sub.id)
+                                  : customSelectedIds;
+                              setCustomSelectedIds(currentSelected.filter((id) => id !== s.id));
+                            }
+                          }}
+                          className="rounded text-[#003820] focus:ring-[#003820] accent-[#003820]"
+                        />
+                        <span className="truncate text-[#0b1c30] text-[11px]">{s.name}</span>
+                      </div>
+                      <span className="font-mono text-[10px] text-[#707971] shrink-0">
+                        {Math.round(s.progressPercent)}%
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Grade Display Banner */}
-        <div className="my-5 p-5 rounded-2xl bg-gradient-to-br from-[#0f5132] via-[#003820] to-[#002111] text-white flex items-center justify-between shadow-sm relative overflow-hidden">
+        {/* Main Display Area: Aggregated Percentage Banner */}
+        <div className="my-4 p-5 rounded-2xl bg-gradient-to-br from-[#0f5132] via-[#003820] to-[#002111] text-white flex items-center justify-between shadow-sm relative overflow-hidden">
           <div className="flex flex-col relative z-10">
             <span className="text-[11px] text-[#95d4ac] font-semibold uppercase tracking-wider font-mono">
-              Target Range
+              {groupFilter === 'science'
+                ? 'Science Track'
+                : groupFilter === 'core'
+                ? 'Core Track'
+                : 'Custom Track'}{' '}
+              Progress
             </span>
-            <span className="text-4xl font-extrabold tracking-tight">
-              Grade {grade}
+            <div className="flex items-baseline gap-1 mt-0.5">
+              <span className="text-4xl font-extrabold tracking-tight font-mono tabular-nums">
+                {groupProgressPercent.toFixed(1)}%
+              </span>
+            </div>
+            <span className="text-[11px] text-white/80 mt-1 font-mono">
+              {groupCompletedBoth} of {groupTotalTopics} Topics Complete
             </span>
           </div>
-          <div className="relative z-10 text-right">
-            <span className="material-symbols-outlined text-4xl text-[#6ffbbe]">
-              workspace_premium
-            </span>
-            <div className="text-xs font-semibold text-[#6ffbbe] mt-1 font-mono">
-              GPA {gpa.toFixed(2)}
+
+          <div className="relative z-10 text-right flex flex-col items-end">
+            <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-xs flex items-center justify-center text-[#6ffbbe] border border-white/10">
+              <span className="material-symbols-outlined text-2xl">
+                {groupFilter === 'science'
+                  ? 'science'
+                  : groupFilter === 'core'
+                  ? 'auto_stories'
+                  : 'tune'}
+              </span>
+            </div>
+            <div className="text-[11px] font-semibold text-[#6ffbbe] mt-1 font-mono">
+              {groupCompletedTheory + groupCompletedPractice} / {groupTotalTopics * 2} Pts
             </div>
           </div>
+
           <div className="absolute -right-6 -bottom-6 w-32 h-32 rounded-full bg-white/5 pointer-events-none" />
         </div>
 
-        {/* Metric Checklist Rows */}
-        <div className="flex flex-col gap-2.5 text-xs">
+        {/* Sub-list detailing specific subjects currently included in that group */}
+        <div className="flex-1 space-y-2 min-h-[140px] max-h-[185px] overflow-y-auto pr-1">
+          {filteredSubjects.length === 0 ? (
+            <div className="h-full flex items-center justify-center p-4 border border-dashed border-gray-200 rounded-xl text-center">
+              <span className="text-xs text-[#707971]">No subjects selected</span>
+            </div>
+          ) : (
+            filteredSubjects.map((sub) => {
+              const subPercent = Math.round(sub.progressPercent);
+              return (
+                <div
+                  key={sub.id}
+                  className="bg-[#eff4ff] p-2.5 rounded-xl border border-[#c0c9c0]/30 space-y-1.5 transition-all hover:border-[#003820]/30"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-[#0b1c30] truncate text-[11px]">
+                      {sub.name}
+                    </span>
+                    <span className="font-mono text-[11px] font-bold text-[#003820] tabular-nums shrink-0 ml-2">
+                      {subPercent}%
+                    </span>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="w-full h-1.5 bg-[#e5eeff] rounded-full overflow-hidden flex">
+                    <div
+                      className="h-full bg-[#003820] transition-all duration-500 rounded-full"
+                      style={{ width: `${subPercent}%` }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-[#404942] font-mono">
+                    <span>
+                      {sub.completedTopicsCount}/{sub.totalTopics} topics done
+                    </span>
+                    <span>
+                      {sub.completedTheoryCount + sub.completedPracticeCount}/{sub.totalTopics * 2} pts
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
 
         {/* Action Button */}
-        <div className="pt-4 mt-2">
+        <div className="pt-3 mt-auto">
           <button
             type="button"
             onClick={() => setIsSimModalOpen(true)}

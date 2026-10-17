@@ -5,7 +5,7 @@ import { MasterSubject } from '../types/syllabus';
 import { SyllabusItem, BoardCard } from '../types/wizard';
 import { subscribeMasterSyllabus } from '../services/syllabusService';
 import { flattenAndDedupeMasterSyllabus } from '../utils/syllabusFlatten';
-import { buildStrategicRoutine } from '../utils/strategyPlannerLogic';
+import { buildStrategicRoutine, getBaseSubjectFamily } from '../utils/strategyPlannerLogic';
 import { getLocalDateString, parseLocalDate } from '../utils/dateUtils';
 import { buildAiPlanningPayload, AiPlanningPayload } from '../utils/aiPlanningPayload';
 import { generateAiRoutine } from '../services/aiRoutineService';
@@ -35,11 +35,19 @@ interface SortablePriorityChapterRowProps {
     chapterName: string;
     subject: string;
     totalMinutes: number;
+    topics?: SyllabusItem[];
   };
   idx: number;
+  customDays?: number;
+  onSetDays: (days: number) => void;
 }
 
-const SortablePriorityChapterRow: React.FC<SortablePriorityChapterRowProps> = ({ ch, idx }) => {
+const SortablePriorityChapterRow: React.FC<SortablePriorityChapterRowProps> = ({
+  ch,
+  idx,
+  customDays,
+  onSetDays,
+}) => {
   const {
     attributes,
     listeners,
@@ -56,6 +64,8 @@ const SortablePriorityChapterRow: React.FC<SortablePriorityChapterRowProps> = ({
     opacity: isDragging ? 0.75 : 1,
   };
 
+  const topicCount = ch.topics ? ch.topics.length : 1;
+
   return (
     <div
       ref={setNodeRef}
@@ -64,7 +74,8 @@ const SortablePriorityChapterRow: React.FC<SortablePriorityChapterRowProps> = ({
         isDragging ? 'shadow-md ring-2 ring-[#003820]/30 scale-[1.01]' : ''
       }`}
     >
-      <div className="flex items-center gap-2.5 min-w-0">
+      {/* Left side: Drag Handle, Priority Number, and 2-line Subject + Chapter Title */}
+      <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-3">
         <button
           type="button"
           {...attributes}
@@ -79,17 +90,73 @@ const SortablePriorityChapterRow: React.FC<SortablePriorityChapterRowProps> = ({
         <span className="font-mono text-[10px] text-[#707971] w-4 text-right shrink-0">
           {idx + 1}.
         </span>
-        <span className="font-mono text-[10px] text-[#707971] uppercase truncate shrink-0 max-w-[100px]">
-          {ch.subject}
-        </span>
-        <span className="font-bold text-xs text-[#0b1c30] truncate">
-          {ch.chapterName}
-        </span>
+        <div className="flex flex-col min-w-0 flex-1">
+          <span className="font-mono font-bold text-[10px] text-[#707971] uppercase truncate leading-tight">
+            {ch.subject}
+          </span>
+          <span className="font-bold text-xs text-[#0b1c30] leading-tight line-clamp-2">
+            {ch.chapterName}
+          </span>
+        </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <span className="font-mono text-[10px] text-[#707971]">
-          {ch.totalMinutes}m
-        </span>
+
+      {/* Right side: Micro-label + Fixed-Width Stepper + Reserved Reset Icon slot */}
+      <div
+        className="flex items-center gap-2 shrink-0"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Micro-label: topic count & pace preview */}
+        <div className="hidden sm:flex flex-col items-end text-right mr-1">
+          <span className="font-mono text-[10px] text-[#707971]">
+            {topicCount} topic{topicCount === 1 ? '' : 's'} • {ch.totalMinutes}m
+          </span>
+          <span className="font-mono text-[9px] text-[#006c49]">
+            {customDays && customDays > 0
+              ? `~${Math.max(1, Math.ceil(topicCount / customDays))} top/day`
+              : 'Smart Auto Pace'}
+          </span>
+        </div>
+
+        {/* Strictly Fixed-Width Stepper Pill [ - ] [ Xd ] [ + ] */}
+        <div className="w-28 flex items-center justify-between bg-white/90 border border-gray-200 rounded-lg p-0.5 shadow-2xs shrink-0">
+          <button
+            type="button"
+            onClick={() => onSetDays(customDays && customDays > 1 ? customDays - 1 : 0)}
+            className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-[#404942] text-xs font-bold cursor-pointer transition-colors shrink-0"
+            title="Decrease target days (minimum 1 day or Auto)"
+            aria-label="Decrease target days"
+          >
+            -
+          </button>
+          <span className="font-mono text-[11px] font-semibold text-[#0b1c30] text-center flex-1 select-none">
+            {customDays && customDays > 0 ? `${customDays}d` : 'Auto'}
+          </span>
+          <button
+            type="button"
+            onClick={() => onSetDays(customDays ? Math.min(15, customDays + 1) : 1)}
+            className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-[#404942] text-xs font-bold cursor-pointer transition-colors shrink-0"
+            title="Increase target days (up to 15 days)"
+            aria-label="Increase target days"
+          >
+            +
+          </button>
+        </div>
+
+        {/* Reserved slot for Reset icon OUTSIDE the fixed stepper wrapper */}
+        <div className="w-6 h-6 flex items-center justify-center shrink-0">
+          {customDays && customDays > 0 ? (
+            <button
+              type="button"
+              onClick={() => onSetDays(0)}
+              className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-black/5 text-[#707971] hover:text-[#0b1c30] transition-colors cursor-pointer"
+              title="Reset this chapter to Auto"
+              aria-label="Reset target days to Auto"
+            >
+              <span className="material-symbols-outlined text-[14px]">restart_alt</span>
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -222,7 +289,42 @@ export const StrategyPlannerPage: React.FC = () => {
   // --- CHUNK 1: PRIORITY MODE STATE & DERIVATIONS ---
   const [isPriorityMode, setIsPriorityMode] = useState(false);
   const [priorityChapterOrder, setPriorityChapterOrder] = useState<string[]>([]);
+  const [chapterCustomDays, setChapterCustomDays] = useState<Record<string, number>>({});
   const [planPayload, setPlanPayload] = useState<AiPlanningPayload | null>(null);
+
+  const handleSetChapterDays = (chapterId: string, days: number) => {
+    setChapterCustomDays((prev) => {
+      const next = { ...prev };
+      if (days <= 0) {
+        delete next[chapterId];
+      } else {
+        next[chapterId] = Math.min(15, Math.max(1, days));
+      }
+      return next;
+    });
+  };
+
+  const handleSmartEstimateDays = () => {
+    const estimates: Record<string, number> = {};
+    selectedChapters.forEach((ch) => {
+      const family = getBaseSubjectFamily(ch.subject);
+      const isComplex =
+        family === 'physics' ||
+        family === 'chemistry' ||
+        family === 'math' ||
+        ch.chapterName.toLowerCase().includes('organic') ||
+        ch.chapterName.toLowerCase().includes('calculus');
+      const topicCount = ch.topics.length;
+      estimates[ch.chapterId] = isComplex
+        ? Math.max(1, Math.ceil(topicCount / 3))
+        : Math.max(1, Math.ceil(topicCount / 4));
+    });
+    setChapterCustomDays(estimates);
+  };
+
+  const handleResetAllDaysToAuto = () => {
+    setChapterCustomDays({});
+  };
 
   // Derive the selected-chapter list (Step 1.2)
   const selectedChapters = useMemo(() => {
@@ -258,6 +360,64 @@ export const StrategyPlannerPage: React.FC = () => {
 
     return Array.from(map.values());
   }, [selectedTopics]);
+
+  // Real-time student-friendly pacing & compression advisor
+  const pacingAdvice = useMemo(() => {
+    if (durationDays <= 0 || selectedChapters.length === 0) return null;
+
+    const familyTotals = new Map<string, { family: string; label: string; requestedDays: number }>();
+
+    selectedChapters.forEach((ch) => {
+      const family = getBaseSubjectFamily(ch.subject);
+      const customVal = chapterCustomDays[ch.chapterId] || 0;
+      let chDays = customVal;
+      if (chDays <= 0) {
+        const isComplex =
+          family === 'physics' ||
+          family === 'chemistry' ||
+          family === 'math' ||
+          ch.chapterName.toLowerCase().includes('organic');
+        chDays = isComplex
+          ? Math.max(1, Math.ceil(ch.topics.length / 3))
+          : Math.max(1, Math.ceil(ch.topics.length / 4));
+      }
+
+      if (!familyTotals.has(family)) {
+        familyTotals.set(family, {
+          family,
+          label: ch.subject,
+          requestedDays: chDays,
+        });
+      } else {
+        familyTotals.get(family)!.requestedDays += chDays;
+      }
+    });
+
+    let maxFamily: { family: string; label: string; requestedDays: number } | null = null;
+    for (const info of familyTotals.values()) {
+      if (!maxFamily || info.requestedDays > (maxFamily as { requestedDays: number }).requestedDays) {
+        maxFamily = info;
+      }
+    }
+
+    const currentMax: { family: string; label: string; requestedDays: number } | null = maxFamily;
+
+    if (currentMax && currentMax.requestedDays > durationDays) {
+      return {
+        type: 'crunch' as const,
+        requestedDays: currentMax.requestedDays,
+        subject: currentMax.label,
+        message: `⏱️ Exam Crunch Mode: You requested ${currentMax.requestedDays} days for ${currentMax.label}, but only ${durationDays} days remain before your exam. AI will proportionally compress daily pacing so 100% of your syllabus finishes on time.`,
+      };
+    }
+
+    return {
+      type: 'smooth' as const,
+      requestedDays: currentMax ? currentMax.requestedDays : durationDays,
+      subject: '',
+      message: `✨ Smooth Full-Window Pacing: Topics will be balanced evenly across all ${durationDays} days with 1 chapter per subject per day in strict priority order.`,
+    };
+  }, [selectedChapters, chapterCustomDays, durationDays]);
 
   // Derive orderedSelectedChapters (Step 1.2)
   const orderedSelectedChapters = useMemo(() => {
@@ -337,6 +497,71 @@ export const StrategyPlannerPage: React.FC = () => {
   const [planWarnings, setPlanWarnings] = useState<string[]>([]);
   const [planGenerated, setPlanGenerated] = useState(false);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [lastGeneratedInputHash, setLastGeneratedInputHash] = useState<string>('');
+
+  // Track canonical input state to detect stale generated plans
+  const currentInputHash = useMemo(() => {
+    return JSON.stringify({
+      prepStartDate,
+      examStartDate,
+      durationDays,
+      capacityMinutes,
+      isPriorityMode,
+      priorityChapterOrder,
+      chapterCustomDays,
+      selectedTopicIds: selectedTopics.map((t) => t.id).sort(),
+    });
+  }, [
+    prepStartDate,
+    examStartDate,
+    durationDays,
+    capacityMinutes,
+    isPriorityMode,
+    priorityChapterOrder,
+    chapterCustomDays,
+    selectedTopics,
+  ]);
+
+  const isPlanStale = Boolean(
+    planGenerated && lastGeneratedInputHash && lastGeneratedInputHash !== currentInputHash
+  );
+
+  // Map chapter IDs and names to 1-indexed priority rank when Priority Mode is enabled
+  const chapterPriorityRankMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (isPriorityMode && priorityChapterOrder && priorityChapterOrder.length > 0) {
+      priorityChapterOrder.forEach((id, idx) => {
+        map.set(id, idx + 1);
+      });
+      // Also index by chapter name for matching
+      selectedChapters.forEach((ch) => {
+        const orderIdx = priorityChapterOrder.indexOf(ch.chapterId);
+        if (orderIdx !== -1) {
+          map.set(ch.chapterName, orderIdx + 1);
+        }
+      });
+    }
+    return map;
+  }, [isPriorityMode, priorityChapterOrder, selectedChapters]);
+
+  // Track multi-day spans & day index per chapter across the generated plan
+  const chapterDayOccurrences = useMemo(() => {
+    const map = new Map<string, number[]>();
+    for (let d = 1; d <= durationDays; d++) {
+      const dayKey = `Day ${d}`;
+      const cards = dayWisePlan[dayKey] || [];
+      cards.forEach((c) => {
+        const key = c.chapterId || c.chapterName || c.title;
+        if (!key) return;
+        const list = map.get(key) || [];
+        if (!list.includes(d)) {
+          list.push(d);
+          map.set(key, list);
+        }
+      });
+    }
+    return map;
+  }, [dayWisePlan, durationDays]);
 
   // Group selected topics by chapter & distribute using generateAiRoutine (Gemini AI Engine with offline fallback)
   const generatePlan = async () => {
@@ -352,6 +577,7 @@ export const StrategyPlannerPage: React.FC = () => {
       isPriorityMode,
       selectedTopics,
       priorityChapterOrder,
+      chapterCustomDays,
     });
     setPlanPayload(payload);
 
@@ -360,6 +586,7 @@ export const StrategyPlannerPage: React.FC = () => {
       setDayWisePlan(result.allocation);
       setPlanWarnings(result.warnings);
       setPlanGenerated(true);
+      setLastGeneratedInputHash(currentInputHash);
       setCurrentStep(3);
     } catch (err) {
       console.error('Failed to generate plan:', err);
@@ -371,10 +598,12 @@ export const StrategyPlannerPage: React.FC = () => {
         ...(isPriorityMode && priorityChapterOrder.length > 0
           ? { priorityChapterOrder }
           : {}),
+        chapterCustomDays,
       });
       setDayWisePlan(allocation);
       setPlanWarnings(warnings);
       setPlanGenerated(true);
+      setLastGeneratedInputHash(currentInputHash);
       setCurrentStep(3);
     } finally {
       setIsGeneratingPlan(false);
@@ -385,18 +614,78 @@ export const StrategyPlannerPage: React.FC = () => {
   const handleImportToChallengeWizard = () => {
     if (!planGenerated || Object.keys(dayWisePlan).length === 0) return;
 
+    // Enriched dayWiseAllocation preserving all card micro-metadata
+    const enrichedAllocation: Record<string, BoardCard[]> = {};
+    const scheduledTopicIdsSet = new Set<string>();
+
+    Object.entries(dayWisePlan).forEach(([dayKey, cards]) => {
+      enrichedAllocation[dayKey] = (cards || []).map((card) => {
+        const chKey = card.chapterId || card.chapterName || card.title;
+        const daysList = chKey ? chapterDayOccurrences.get(chKey) || [] : [];
+        const totalParts = daysList.length;
+        const currentPartIndex = card.dayNumber ? daysList.indexOf(card.dayNumber) + 1 : 0;
+        const priorityRank =
+          (card.chapterId && chapterPriorityRankMap.get(card.chapterId)) ||
+          (card.chapterName && chapterPriorityRankMap.get(card.chapterName)) ||
+          (card.title && chapterPriorityRankMap.get(card.title));
+
+        const cardTopics = (card.topics || []).map((t) => {
+          scheduledTopicIdsSet.add(t.id);
+          return {
+            ...t,
+            isMultiDayPart: card.isMultiDayPart || totalParts > 1,
+            partInfo:
+              card.partInfo ||
+              (totalParts > 1 && currentPartIndex > 0 ? `Part ${currentPartIndex}/${totalParts}` : undefined),
+            isCarriedOver: false,
+          };
+        });
+
+        return {
+          ...card,
+          chapterTitle: card.chapterName || card.title,
+          subjectColor: card.subject ? getSubjectColor(card.subject) : undefined,
+          topicIds: cardTopics.map((t) => t.id),
+          topics: cardTopics,
+          priorityRank: priorityRank !== undefined ? priorityRank : undefined,
+          isMultiDayPart: card.isMultiDayPart || totalParts > 1,
+          partInfo:
+            card.partInfo ||
+            (totalParts > 1 && currentPartIndex > 0 ? `Part ${currentPartIndex}/${totalParts}` : undefined),
+          isCarriedOver: false,
+        };
+      });
+    });
+
+    // Ensure all user-selected topics are tracked so Challenge Wizard selects them 100%
+    selectedTopics.forEach((t) => scheduledTopicIdsSet.add(t.id));
+    const allSelectedTopicIds = Array.from(scheduledTopicIdsSet);
+
+    const importStrategy = {
+      examName: examName.trim() || 'Board Prep',
+      challengeName: examName.trim() ? `${examName.trim()} Challenge` : 'Board Prep Challenge',
+      prepStartDate,
+      startDate: prepStartDate,
+      examStartDate,
+      examDate: examStartDate,
+      durationDays,
+      prepDays: durationDays,
+      dailyCapacityMinutes: capacityMinutes,
+      dayWiseAllocation: enrichedAllocation,
+      selectedTopicIds: allSelectedTopicIds,
+      selectedTopics,
+      payload: planPayload,
+    };
+
+    try {
+      localStorage.setItem('pendingChallengeImport', JSON.stringify(importStrategy));
+    } catch (e) {
+      console.warn('Could not cache pendingChallengeImport in localStorage', e);
+    }
+
     navigate('/challenges', {
       state: {
-        strategyImport: {
-          examName: examName.trim(),
-          prepStartDate,
-          examStartDate,
-          durationDays,
-          dailyCapacityMinutes: capacityMinutes,
-          dayWiseAllocation: dayWisePlan,
-          selectedTopicIds: selectedTopics.map((t) => t.id),
-          payload: planPayload,
-        },
+        strategyImport: importStrategy,
       },
     });
   };
@@ -706,50 +995,6 @@ export const StrategyPlannerPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Priority Mode Card (Step 1.3) */}
-          <div className="bg-white rounded-2xl border border-[#c0c9c0]/30 shadow-xs p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-lg text-[#003820]">checklist</span>
-                <span className="font-bold text-xs text-[#0b1c30]">Priority Mode</span>
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isPriorityMode}
-                  onChange={(e) => setIsPriorityMode(e.target.checked)}
-                  className="rounded border-[#c0c9c0] text-[#003820] focus:ring-[#003820] cursor-pointer"
-                />
-              </label>
-            </div>
-
-            {isPriorityMode && selectedTopics.length > 0 && (
-              <div className="mt-3 space-y-2.5 pt-3 border-t border-[#e2e8f0]">
-                <p className="text-[10px] text-[#707971]">Top of this list = studied first.</p>
-                <DndContext
-                  sensors={prioritySensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handlePriorityDragEnd}
-                >
-                  <SortableContext
-                    items={orderedSelectedChapters.map((c) => c.chapterId)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="space-y-1.5">
-                      {orderedSelectedChapters.map((ch, idx) => (
-                        <SortablePriorityChapterRow
-                          key={ch.chapterId}
-                          ch={ch}
-                          idx={idx}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
-                </DndContext>
-              </div>
-            )}
-          </div>
-
           {/* Filter Bar & Quick Select Controls */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-[#c0c9c0]/30 shadow-xs">
             {/* Subject Filters */}
@@ -1000,6 +1245,100 @@ export const StrategyPlannerPage: React.FC = () => {
             </div>
           )}
 
+          {/* Priority Mode Card (Moved Below Curriculum Subjects List) */}
+          <div className="bg-white rounded-2xl border border-[#c0c9c0]/30 shadow-xs p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-lg text-[#003820]">checklist</span>
+                <span className="font-bold text-xs text-[#0b1c30]">Priority Mode</span>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer" htmlFor="isPriority">
+                <input
+                  type="checkbox"
+                  id="isPriority"
+                  checked={isPriorityMode}
+                  onChange={(e) => setIsPriorityMode(e.target.checked)}
+                  className="rounded border-[#c0c9c0] text-[#003820] focus:ring-[#003820] cursor-pointer"
+                />
+              </label>
+            </div>
+
+            {isPriorityMode && selectedTopics.length > 0 && (
+              <div className="mt-3 space-y-2.5 pt-3 border-t border-[#e2e8f0]">
+                {/* Header Description & Quick Actions */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[10px] text-[#707971]">
+                    Top of this list = studied first. Customize target study days per chapter below.
+                  </p>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleSmartEstimateDays}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-semibold bg-[#eff4ff] text-[#003820] border border-[#003820]/20 hover:bg-[#6ffbbe]/20 cursor-pointer transition-colors shadow-2xs"
+                      title="Automatically estimate realistic days based on topic counts and subject complexity"
+                    >
+                      <span className="material-symbols-outlined text-xs">auto_fix_high</span>
+                      <span>Smart Auto-Estimate</span>
+                    </button>
+                    {Object.keys(chapterCustomDays).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleResetAllDaysToAuto}
+                        className="px-2 py-1 rounded-xl text-[10px] font-semibold text-[#707971] hover:text-[#0b1c30] hover:bg-gray-100 cursor-pointer transition-colors"
+                        title="Reset all chapters back to AI Smart Pace (Auto)"
+                      >
+                        Reset to Auto
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Real-time Student-Friendly Pacing & Compression Advisor Banner */}
+                {pacingAdvice && (
+                  <div
+                    className={`flex items-start gap-2 p-2.5 rounded-xl text-xs leading-relaxed transition-all ${
+                      pacingAdvice.type === 'crunch'
+                        ? 'bg-amber-50/90 border border-amber-200 text-amber-900'
+                        : 'bg-[#eff4ff] border border-[#003820]/15 text-[#003820]'
+                    }`}
+                  >
+                    <span
+                      className={`material-symbols-outlined text-base shrink-0 ${
+                        pacingAdvice.type === 'crunch' ? 'text-amber-700' : 'text-[#006c49]'
+                      }`}
+                    >
+                      {pacingAdvice.type === 'crunch' ? 'timer' : 'auto_awesome'}
+                    </span>
+                    <p className="font-medium">{pacingAdvice.message}</p>
+                  </div>
+                )}
+
+                <DndContext
+                  sensors={prioritySensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handlePriorityDragEnd}
+                >
+                  <SortableContext
+                    items={orderedSelectedChapters.map((c) => c.chapterId)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-1.5">
+                      {orderedSelectedChapters.map((ch, idx) => (
+                        <SortablePriorityChapterRow
+                          key={ch.chapterId}
+                          ch={ch}
+                          idx={idx}
+                          customDays={chapterCustomDays[ch.chapterId]}
+                          onSetDays={(days) => handleSetChapterDays(ch.chapterId, days)}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              </div>
+            )}
+          </div>
+
           {/* Centered loader-card during plan generation */}
           {isGeneratingPlan && (
             <div className="p-12 text-center text-[#707971] text-xs font-mono bg-white rounded-3xl border border-gray-100 animate-pulse">
@@ -1024,7 +1363,13 @@ export const StrategyPlannerPage: React.FC = () => {
               onClick={generatePlan}
               className="px-6 py-2.5 rounded-xl bg-[#003820] hover:bg-[#0f5132] text-white text-xs font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span>{isGeneratingPlan ? 'Generating Strategic Plan...' : `Generate Strategic Plan (${selectedTopics.length} topics)`}</span>
+              <span>
+                {isGeneratingPlan
+                  ? 'Generating Strategic Plan...'
+                  : isPlanStale
+                  ? `Update Strategic Plan (${selectedTopics.length} topics)`
+                  : `Generate Strategic Plan (${selectedTopics.length} topics)`}
+              </span>
               <span className="material-symbols-outlined text-sm">{isGeneratingPlan ? 'progress_activity' : 'insights'}</span>
             </button>
           </div>
@@ -1077,6 +1422,32 @@ export const StrategyPlannerPage: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Stale Plan Notice if user modified scope or timeline after generation */}
+          {isPlanStale && (
+            <div className="bg-sky-50 border border-sky-200 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-sky-900 animate-in slide-in-from-top-1 duration-150 shadow-xs">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="material-symbols-outlined text-sky-600 shrink-0 text-xl">update</span>
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-sky-800">
+                    Syllabus Scope or Timeline Modified
+                  </h4>
+                  <p className="text-xs text-sky-900/80 mt-0.5">
+                    Your parameters changed after generating this schedule. Click Re-balance Workload to refresh the routine before importing.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isGeneratingPlan}
+                onClick={generatePlan}
+                className="px-4 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold shrink-0 transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-sm">{isGeneratingPlan ? 'progress_activity' : 'refresh'}</span>
+                <span>{isGeneratingPlan ? 'Updating...' : 'Update Schedule'}</span>
+              </button>
+            </div>
+          )}
 
           {/* Amber warnings notice if any */}
           {planWarnings.length > 0 && (
@@ -1209,38 +1580,72 @@ export const StrategyPlannerPage: React.FC = () => {
                           <span className="text-[11px] text-[#707971]">Rest / Buffer Day</span>
                         </div>
                       ) : (
-                        cards.map((card, cIdx) => (
-                          <div
-                            key={`${card.id}-${cIdx}`}
-                            className="p-2.5 rounded-xl bg-[#f8fafc] border border-gray-200/80 space-y-1.5"
-                          >
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="font-bold text-[#0b1c30] truncate">
-                                {card.chapterName || card.title}
-                              </span>
-                              <span className="font-mono text-[10px] text-[#707971] shrink-0">
-                                {card.durationMinutes}m
-                              </span>
-                            </div>
+                        cards.map((card, cIdx) => {
+                          const chKey = card.chapterId || card.chapterName || card.title;
+                          const daysList = chKey ? chapterDayOccurrences.get(chKey) || [] : [];
+                          const totalParts = daysList.length;
+                          const currentPartIndex = daysList.indexOf(dayNum) + 1;
+                          const priorityRank =
+                            (card.chapterId && chapterPriorityRankMap.get(card.chapterId)) ||
+                            (card.chapterName && chapterPriorityRankMap.get(card.chapterName)) ||
+                            (card.title && chapterPriorityRankMap.get(card.title));
 
-                            {/* Topics list inside chapter card */}
-                            {card.topics && card.topics.length > 0 && (
-                              <div className="space-y-1 pt-1 border-t border-gray-200/60">
-                                {card.topics.map((top, tIdx) => (
-                                  <div
-                                    key={`${top.id}-${tIdx}`}
-                                    className="flex items-center justify-between text-[10px] text-[#404942]"
-                                  >
-                                    <span className="truncate pr-1">• {top.title}</span>
-                                    <span className="font-mono text-[9px] text-[#707971] shrink-0">
-                                      {top.durationMinutes}m
+                          return (
+                            <div
+                              key={`${card.id}-${cIdx}`}
+                              className={`p-2.5 rounded-xl border border-gray-200/80 space-y-1.5 transition-colors ${
+                                card.subject ? getSubjectColor(card.subject) : 'bg-[#f8fafc]'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-1.5 text-[11px]">
+                                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                  {isPriorityMode && priorityRank !== undefined && (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded-md bg-[#003820] text-white text-[9px] font-mono font-bold shrink-0 shadow-2xs"
+                                      title={`Priority #${priorityRank}`}
+                                    >
+                                      Priority #{priorityRank}
                                     </span>
-                                  </div>
-                                ))}
+                                  )}
+                                  <span className="font-bold text-[#0b1c30] truncate">
+                                    {card.chapterName || card.title}
+                                  </span>
+                                  {((card.isMultiDayPart && card.partInfo) || (totalParts > 1 && currentPartIndex > 0)) && (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded-md bg-white/90 border border-gray-200 text-[#006c49] text-[9px] font-mono font-semibold shrink-0"
+                                      title={card.partInfo || `Part ${currentPartIndex} of ${totalParts}`}
+                                    >
+                                      {card.partInfo || `Part ${currentPartIndex}/${totalParts}`}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0 font-mono text-[10px] text-[#707971]">
+                                  {card.topics && card.topics.length > 0 && (
+                                    <span>{card.topics.length}t •</span>
+                                  )}
+                                  <span className="font-semibold text-[#003820]">{card.durationMinutes}m</span>
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        ))
+
+                              {/* Topics list inside chapter card */}
+                              {card.topics && card.topics.length > 0 && (
+                                <div className="space-y-1 pt-1 border-t border-gray-200/60">
+                                  {card.topics.map((top, tIdx) => (
+                                    <div
+                                      key={`${top.id}-${tIdx}`}
+                                      className="flex items-start justify-between gap-1 text-[10px] text-[#404942]"
+                                    >
+                                      <span className="line-clamp-2 leading-tight pr-1">• {top.title}</span>
+                                      <span className="font-mono text-[9px] text-[#707971] shrink-0 font-medium">
+                                        {top.durationMinutes}m
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
                       )}
                     </div>
                   </div>

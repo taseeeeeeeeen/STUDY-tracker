@@ -1,4 +1,5 @@
 import { SyllabusItem } from '../types/wizard';
+import { getBaseSubjectFamily } from './strategyPlannerLogic';
 
 export interface AiPlanningPayloadTopic {
   id: string;
@@ -12,11 +13,14 @@ export interface AiPlanningPayloadChapter {
   chapterId: string;
   chapterName: string;
   priorityIndex: number | null;
+  requestedDays?: number | 'Auto';
+  baseSubjectFamily?: string;
   topics: AiPlanningPayloadTopic[];
 }
 
 export interface AiPlanningPayloadSubject {
   subject: string;
+  baseSubjectFamily?: string;
   chapters: AiPlanningPayloadChapter[];
 }
 
@@ -29,6 +33,8 @@ export interface AiPlanningPayload {
     perSubjectMinutes: Record<string, number> | null;
   };
   priorityMode: boolean;
+  priorityChapterOrder?: string[];
+  chapterCustomDays?: Record<string, number>;
   subjects: AiPlanningPayloadSubject[];
 }
 
@@ -40,6 +46,7 @@ export interface BuildAiPlanningPayloadInput {
   isPriorityMode: boolean;
   selectedTopics: SyllabusItem[];
   priorityChapterOrder: string[];
+  chapterCustomDays?: Record<string, number>;
 }
 
 export function buildAiPlanningPayload(input: BuildAiPlanningPayloadInput): AiPlanningPayload {
@@ -51,6 +58,7 @@ export function buildAiPlanningPayload(input: BuildAiPlanningPayloadInput): AiPl
     isPriorityMode,
     selectedTopics,
     priorityChapterOrder,
+    chapterCustomDays = {},
   } = input;
 
   // Group topics by subject -> chapter in first-appearance order
@@ -88,6 +96,7 @@ export function buildAiPlanningPayload(input: BuildAiPlanningPayloadInput): AiPl
 
   subjectMap.forEach((chaptersInSub, subjectName) => {
     const chaptersPayload: AiPlanningPayloadChapter[] = [];
+    const baseSubjectFamily = getBaseSubjectFamily(subjectName);
 
     chaptersInSub.forEach((chData, chapterId) => {
       let priorityIndex: number | null = null;
@@ -97,6 +106,15 @@ export function buildAiPlanningPayload(input: BuildAiPlanningPayloadInput): AiPl
           priorityIndex = orderIdx + 1; // 1-based index
         }
       }
+
+      const customDays =
+        chapterCustomDays[chapterId] ||
+        chapterCustomDays[chData.chapterName] ||
+        chapterCustomDays[`${subjectName}::${chapterId}`] ||
+        chapterCustomDays[`${subjectName}::${chData.chapterName}`] ||
+        0;
+
+      const requestedDays: number | 'Auto' = customDays > 0 ? customDays : 'Auto';
 
       const topicsPayload: AiPlanningPayloadTopic[] = chData.topics.map((t) => ({
         id: t.id,
@@ -110,12 +128,15 @@ export function buildAiPlanningPayload(input: BuildAiPlanningPayloadInput): AiPl
         chapterId,
         chapterName: chData.chapterName,
         priorityIndex,
+        requestedDays,
+        baseSubjectFamily,
         topics: topicsPayload,
       });
     });
 
     subjectsPayload.push({
       subject: subjectName,
+      baseSubjectFamily,
       chapters: chaptersPayload,
     });
   });
@@ -129,6 +150,8 @@ export function buildAiPlanningPayload(input: BuildAiPlanningPayloadInput): AiPl
       perSubjectMinutes: null,
     },
     priorityMode: isPriorityMode,
+    priorityChapterOrder,
+    chapterCustomDays,
     subjects: subjectsPayload,
   };
 }

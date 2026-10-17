@@ -24,10 +24,6 @@ const responseSchema = {
       type: Type.STRING,
       enum: ['ok', 'infeasible_relaxed', 'infeasible_unsolvable'],
     },
-    warnings: {
-      type: Type.ARRAY,
-      items: { type: Type.STRING },
-    },
     days: {
       type: Type.ARRAY,
       items: {
@@ -40,32 +36,18 @@ const responseSchema = {
               type: Type.OBJECT,
               properties: {
                 chapterId: { type: Type.STRING },
-                chapterName: { type: Type.STRING },
-                subject: { type: Type.STRING },
-                title: { type: Type.STRING },
-                durationMinutes: { type: Type.INTEGER },
-                tag: { type: Type.STRING },
-                dayNumber: { type: Type.INTEGER },
                 topics: {
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
                     properties: {
                       id: { type: Type.STRING },
-                      title: { type: Type.STRING },
-                      subconcept: { type: Type.STRING },
-                      durationMinutes: { type: Type.INTEGER },
-                      tag: { type: Type.STRING },
-                      isCarriedOver: { type: Type.BOOLEAN },
-                      carriedOverFromDay: { type: Type.INTEGER },
                     },
-                    required: ['id', 'title', 'durationMinutes'],
+                    required: ['id'],
                   },
                 },
-                isCarriedOver: { type: Type.BOOLEAN },
-                carriedOverFromDay: { type: Type.INTEGER },
               },
-              required: ['chapterId', 'chapterName', 'subject', 'title', 'durationMinutes', 'dayNumber', 'topics'],
+              required: ['chapterId', 'topics'],
             },
           },
         },
@@ -73,19 +55,28 @@ const responseSchema = {
       },
     },
   },
-  required: ['status', 'days', 'warnings'],
+  required: ['status', 'days'],
 };
 
 function buildSystemInstruction(payload: AiPlanningPayload): string {
+  const prepDays = payload.numDays;
+  const capacityMins = payload.dailyTimeLimits.totalPerDayMinutes;
+  const priorityOrderStr =
+    payload.priorityChapterOrder && payload.priorityChapterOrder.length > 0
+      ? payload.priorityChapterOrder.join(' -> ')
+      : 'Sequential priority order';
+
   return [
-    'You are an expert study routine planner.',
-    `Target days: ${payload.numDays} (Day 1 through Day ${payload.numDays}). Daily total capacity: ${payload.dailyTimeLimits.totalPerDayMinutes} minutes.`,
-    'You MUST strictly follow these three core scheduling rules:',
-    '1. STRICT INTRA-SUBJECT CHAPTER PROGRESSION (Rule 1): For each subject, its selected chapters must be tackled strictly in priority order. The top selected chapter of a subject MUST be 100% completed (all its topics finished) before ANY subsequent chapter of that same subject can begin. NEVER start or schedule topics from a new chapter of subject X while a previous chapter of subject X has incomplete/pending topics.',
-    '2. 6-TOPIC DAILY CHUNKING (Rule 2): When scheduling topics for an active chapter on any given day, assign at most 6 topics of that chapter to that day. If a chapter has more than 6 topics (e.g., 14 topics), schedule its first 6 topics on the first day, the next 6 topics on the next available day, and the remaining 2 topics on the third day. Only once all topics of that chapter are finished does the subject unlock and advance to its next chapter.',
-    '3. MULTI-SUBJECT BALANCED INTERLEAVING (Rule 3): A single day CAN and SHOULD include chapters from multiple distinct subjects (e.g. 6 topics of Physics and 6 topics of Chemistry on Day 1). Interleave the highest priority pending chapters across available subjects to balance study workload across the target days based on the remaining days and syllabus volume.',
-    `Hard Capacity Constraint: Target daily capacity is ${payload.dailyTimeLimits.totalPerDayMinutes} minutes. Each card durationMinutes MUST equal the exact sum of its topics' durationMinutes. If fitting all topics into ${payload.numDays} days requires exceeding daily limits or is impossible, mark status = 'infeasible_unsolvable' or 'infeasible_relaxed' and document reasons in warnings.`,
-    'Output format: Return ONLY a valid JSON object matching the requested schema with all days (Day 1 to Day N) and card structures populated.',
+    'You are a high-speed study routine scheduling engine.',
+    `Target: ${prepDays} days (Day 1..Day ${prepDays}). Daily capacity limit: ${capacityMins} minutes.`,
+    `Global Priority: ${priorityOrderStr}.`,
+    '',
+    'Core Constraints:',
+    '1. Priority Lock: For any subject, schedule 100% of the active chapter before starting its next chapter. Follow priority order strictly.',
+    '2. Single Chapter / Subject / Day: At most one chapter per subject per day. Interleave distinct base subjects per day.',
+    `3. Full-Horizon Pacing: Distribute topics evenly across all ${prepDays} days. Never leave trailing days empty when topics >= ${prepDays}.`,
+    '4. Minified Output: Return strictly minified JSON. Each card only needs { chapterId, topics: [{ id }] }. Do NOT include titles, descriptions, warnings, or verbose text.',
+    '5. Multi-day chapter parts are calculated automatically in post-processing. Do NOT output isCarriedOver or backlog flags.',
   ].join('\n');
 }
 
@@ -118,13 +109,17 @@ export function fallbackOfflineRoutine(
   });
 
   chapterPriorityPairs.sort((a, b) => a.priorityIndex - b.priorityIndex);
-  const orderedIds = chapterPriorityPairs.map((p) => p.chapterId);
+  const orderedIds =
+    payload.priorityChapterOrder && payload.priorityChapterOrder.length > 0
+      ? payload.priorityChapterOrder
+      : chapterPriorityPairs.map((p) => p.chapterId);
 
   const { allocation, warnings } = buildStrategicRoutine({
     topics: flattenedTopics,
     numDays: payload.numDays,
     dailyCapacityMinutes: payload.dailyTimeLimits.totalPerDayMinutes,
     ...(payload.priorityMode && orderedIds.length > 0 ? { priorityChapterOrder: orderedIds } : {}),
+    chapterCustomDays: payload.chapterCustomDays,
   });
 
   const finalWarnings = reasonWarning ? [reasonWarning, ...warnings] : warnings;
@@ -138,8 +133,12 @@ export function fallbackOfflineRoutine(
 
 export async function generateAiRoutine(payload: AiPlanningPayload): Promise<AiRoutineResult> {
   const apiKey =
-    import.meta.env.VITE_GEMINI_API_KEY ||
-    (import.meta.env.GEMINI_API_KEY as string) ||
+    (typeof import.meta !== 'undefined' &&
+      import.meta.env &&
+      (import.meta.env.VITE_GEMINI_API_KEY || (import.meta.env.GEMINI_API_KEY as string))) ||
+    (typeof process !== 'undefined' &&
+      process.env &&
+      (process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY)) ||
     '';
 
   if (!apiKey || !apiKey.trim()) {

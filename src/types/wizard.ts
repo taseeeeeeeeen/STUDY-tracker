@@ -23,6 +23,8 @@ export interface BoardTopic {
   chapterName?: string;
   isCarriedOver?: boolean;
   carriedOverFromDay?: number;
+  isMultiDayPart?: boolean;
+  partInfo?: string;
   dayNumber?: number;
 }
 
@@ -38,6 +40,8 @@ export interface BoardCard {
   topics?: BoardTopic[];
   isCarriedOver?: boolean;
   carriedOverFromDay?: number;
+  isMultiDayPart?: boolean;
+  partInfo?: string;
 }
 
 export interface DayColumnData {

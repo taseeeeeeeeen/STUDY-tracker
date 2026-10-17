@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AiPlanningPayload } from '../utils/aiPlanningPayload';
 import { BoardCard, BoardTopic } from '../types/wizard';
+import { buildStrategicRoutine } from '../utils/strategyPlannerLogic';
 
 export const AiRoutineTopicSchema = z.object({
   id: z.string(),
@@ -10,6 +11,8 @@ export const AiRoutineTopicSchema = z.object({
   tag: z.string().optional().default('Core Concept'),
   isCarriedOver: z.boolean().optional().default(false),
   carriedOverFromDay: z.coerce.number().optional(),
+  isMultiDayPart: z.boolean().optional().default(false),
+  partInfo: z.string().optional().default(''),
 });
 
 export const AiRoutineCardSchema = z.object({
@@ -24,6 +27,8 @@ export const AiRoutineCardSchema = z.object({
   topics: z.array(AiRoutineTopicSchema).optional().default([]),
   isCarriedOver: z.boolean().optional().default(false),
   carriedOverFromDay: z.coerce.number().optional(),
+  isMultiDayPart: z.boolean().optional().default(false),
+  partInfo: z.string().optional().default(''),
 });
 
 export const AiRoutineDaySchema = z.object({
@@ -135,8 +140,7 @@ export function validateAndEnforceInvariants(
                 subject: card.subject || payloadMeta.subject,
                 chapterId: card.chapterId || payloadMeta.chapterId,
                 chapterName: card.chapterName || payloadMeta.chapterName,
-                isCarriedOver: Boolean(t.isCarriedOver),
-                carriedOverFromDay: t.carriedOverFromDay,
+                isCarriedOver: false,
                 dayNumber: dayNum,
               });
             });
@@ -178,8 +182,7 @@ export function validateAndEnforceInvariants(
             tag: cardTag,
             dayNumber: dayNum,
             topics: validCardTopics,
-            isCarriedOver: Boolean(card.isCarriedOver),
-            carriedOverFromDay: card.carriedOverFromDay,
+            isCarriedOver: false,
           };
 
           allocation[dayKey].push(finalCard);
@@ -230,6 +233,7 @@ export function validateAndEnforceInvariants(
         chapterId: meta.chapterId,
         chapterName: meta.chapterName,
         dayNumber: bestDay,
+        isCarriedOver: false,
       };
 
       // Check if card for this chapter exists on bestDay
@@ -252,6 +256,55 @@ export function validateAndEnforceInvariants(
           tag: meta.tag,
           dayNumber: bestDay,
           topics: [topicObj],
+          isCarriedOver: false,
+        });
+      }
+    });
+  }
+
+  // 2.5 Multi-Day Part Decoration: Assign isMultiDayPart & partInfo ("Part 1/3") without fake backlog flags
+  const chapterDayAppearances = new Map<string, number[]>();
+  for (let d = 1; d <= numDays; d++) {
+    const dayKey = `Day ${d}`;
+    const dayCards = allocation[dayKey] || [];
+    dayCards.forEach((c) => {
+      const chId = c.chapterId || c.title;
+      if (!chId) return;
+      const list = chapterDayAppearances.get(chId) || [];
+      if (!list.includes(d)) {
+        list.push(d);
+        chapterDayAppearances.set(chId, list);
+      }
+    });
+  }
+
+  for (let d = 1; d <= numDays; d++) {
+    const dayKey = `Day ${d}`;
+    const dayCards = allocation[dayKey] || [];
+    dayCards.forEach((c) => {
+      const chId = c.chapterId || c.title;
+      const days = chId ? chapterDayAppearances.get(chId) || [d] : [d];
+      const totalParts = days.length;
+      const partIndex = days.indexOf(d) + 1;
+
+      // Cleanly clear fake backlog flags
+      c.isCarriedOver = false;
+      c.carriedOverFromDay = undefined;
+
+      if (totalParts > 1 && partIndex > 0) {
+        c.isMultiDayPart = true;
+        c.partInfo = `Part ${partIndex}/${totalParts}`;
+      } else {
+        c.isMultiDayPart = false;
+        c.partInfo = undefined;
+      }
+
+      if (Array.isArray(c.topics)) {
+        c.topics.forEach((top) => {
+          top.isCarriedOver = false;
+          top.carriedOverFromDay = undefined;
+          top.isMultiDayPart = c.isMultiDayPart;
+          top.partInfo = c.partInfo;
         });
       }
     });
@@ -276,15 +329,19 @@ export function validateAndEnforceInvariants(
     }
   }
 
-  // 4. Check intra-subject chapter priority progression
-  const subjectChapterDays = new Map<string, Map<string, { startDay: number; endDay: number; priorityIndex: number }>>();
+  // 4. Validate Intra-Subject Chapter Priority Progression
+  const subjectChapterDays = new Map<
+    string,
+    Map<string, { startDay: number; endDay: number; priorityIndex: number }>
+  >();
   payload.subjects.forEach((subj) => {
     const chMap = new Map<string, { startDay: number; endDay: number; priorityIndex: number }>();
     subj.chapters.forEach((ch, idx) => {
       chMap.set(ch.chapterId, {
         startDay: Infinity,
         endDay: -1,
-        priorityIndex: ch.priorityIndex !== null && ch.priorityIndex !== undefined ? ch.priorityIndex : idx,
+        priorityIndex:
+          ch.priorityIndex !== null && ch.priorityIndex !== undefined ? ch.priorityIndex : idx,
       });
     });
     subjectChapterDays.set(subj.subject, chMap);
@@ -299,17 +356,10 @@ export function validateAndEnforceInvariants(
         info.startDay = Math.min(info.startDay, d);
         info.endDay = Math.max(info.endDay, d);
       }
-
-      // Check 6-topic chunking
-      if (card.topics && card.topics.length > 6) {
-        warnings.push(
-          `Day ${d}: "${card.chapterName || card.title}" contains ${card.topics.length} topics (max recommended: 6 topics per day).`
-        );
-      }
     });
   }
 
-  // Validate that for any subject, lower priority chapter does not start before higher priority finishes
+  let priorityOrderViolated = false;
   subjectChapterDays.forEach((chMap, subj) => {
     const chapters = Array.from(chMap.entries())
       .filter(([, info]) => info.startDay !== Infinity)
@@ -319,12 +369,94 @@ export function validateAndEnforceInvariants(
       const [chIdA, infoA] = chapters[i];
       const [chIdB, infoB] = chapters[i + 1];
       if (infoB.startDay < infoA.endDay) {
+        priorityOrderViolated = true;
         warnings.push(
           `Subject ${subj}: Chapter "${chIdB}" started on Day ${infoB.startDay} before prior chapter "${chIdA}" completed (Day ${infoA.endDay}).`
         );
       }
     }
   });
+
+  // 5. Check Single-Chapter-Per-Subject-Per-Day rule (unless emergency crunch)
+  let sameSubjectViolation = false;
+  for (let d = 1; d <= numDays; d++) {
+    const daysRemaining = numDays - d + 1;
+    const dayCards = allocation[`Day ${d}`] || [];
+    const subjectChaptersOnDay = new Map<string, Set<string>>();
+
+    dayCards.forEach((c) => {
+      if (!subjectChaptersOnDay.has(c.subject)) {
+        subjectChaptersOnDay.set(c.subject, new Set());
+      }
+      subjectChaptersOnDay.get(c.subject)!.add(c.chapterId || c.title);
+    });
+
+    subjectChaptersOnDay.forEach((chapters, subj) => {
+      if (chapters.size > 1) {
+        const subjMeta = payload.subjects.find((s) => s.subject === subj);
+        const totalChapters = subjMeta ? subjMeta.chapters.length : 1;
+        const isEmergencyCrunch = totalChapters > daysRemaining;
+        if (!isEmergencyCrunch) {
+          sameSubjectViolation = true;
+          warnings.push(
+            `Day ${d}: Multiple chapters of "${subj}" scheduled together without emergency crunch.`
+          );
+        }
+      }
+    });
+  }
+
+  // 6. Check Zero Empty Trailing Days rule
+  let hasEmptyTrailingDays = false;
+  if (payloadTopicMap.size >= numDays) {
+    for (let d = 1; d <= numDays; d++) {
+      const dayCards = allocation[`Day ${d}`] || [];
+      const topicCount = dayCards.reduce((sum, c) => sum + (c.topics?.length || 0), 0);
+      if (topicCount === 0) {
+        hasEmptyTrailingDays = true;
+        warnings.push(`Day ${d} was left empty despite total selected topics exceeding prep days.`);
+        break;
+      }
+    }
+  }
+
+  // 7. Auto-Repair Trigger:
+  // If the AI response drops topics, leaves trailing days empty, violates intra-subject priority,
+  // or violates single-chapter-per-day constraints, automatically repair via buildStrategicRoutine
+  const hasDroppedTopics = missingTopicIds.length > 0;
+  if (hasDroppedTopics || hasEmptyTrailingDays || priorityOrderViolated || sameSubjectViolation) {
+    const flattenedTopics: any[] = [];
+    payloadTopicMap.forEach((t) => {
+      flattenedTopics.push({
+        id: t.id,
+        subject: t.subject,
+        title: t.title,
+        subconcept: t.subconcept,
+        durationMinutes: t.durationMinutes,
+        tag: t.tag,
+        checked: true,
+        chapterId: t.chapterId,
+        chapterName: t.chapterName,
+      });
+    });
+
+    const repaired = buildStrategicRoutine({
+      topics: flattenedTopics,
+      numDays: payload.numDays,
+      dailyCapacityMinutes: payload.dailyTimeLimits.totalPerDayMinutes,
+      priorityChapterOrder: payload.priorityChapterOrder,
+      chapterCustomDays: payload.chapterCustomDays,
+    });
+
+    return {
+      status: 'ok',
+      allocation: repaired.allocation,
+      warnings: [
+        'Schedule automatically optimized to enforce strict priority completion, custom chapter pacing, and full exam deadline coverage.',
+        ...repaired.warnings,
+      ],
+    };
+  }
 
   let finalStatus: 'ok' | 'infeasible_relaxed' | 'infeasible_unsolvable' = raw.status || 'ok';
   if (capacityViolation || warnings.length > 0) {
@@ -339,3 +471,4 @@ export function validateAndEnforceInvariants(
     warnings,
   };
 }
+

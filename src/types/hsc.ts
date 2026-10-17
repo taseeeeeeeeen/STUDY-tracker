@@ -28,6 +28,18 @@ export interface HSCSubject {
   chapters: HSCChapter[];
 }
 
+export interface HSCSubjectProgress {
+  id: string;
+  name: string;
+  totalTopics: number;
+  completedTopicsCount: number;
+  completedTheoryCount: number;
+  completedPracticeCount: number;
+  progressPercent: number;
+  paperType?: '1st' | '2nd' | 'both';
+  icon?: string;
+}
+
 export interface HSCProgressSummary {
   grandProgressPercent: number;
   overallTheoryPercent: number;
@@ -42,4 +54,5 @@ export interface HSCProgressSummary {
   completedMCQs: number;
   totalCQs: number;
   completedCQs: number;
+  perSubject?: HSCSubjectProgress[];
 }

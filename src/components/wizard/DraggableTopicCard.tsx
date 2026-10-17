@@ -50,7 +50,7 @@ const DraggableTopicRow: React.FC<DraggableTopicRowProps> = ({
         e.stopPropagation();
         listeners?.onPointerDown?.(e);
       }}
-      className={`p-2 rounded-lg text-[11px] border transition-all flex items-center justify-between gap-2 select-none ${
+      className={`p-2.5 rounded-lg border transition-all flex items-center justify-between gap-2 select-none ${
         isBoardLocked ? 'cursor-default' : 'cursor-grab active:cursor-grabbing hover:shadow-xs'
       } ${
         topic.isCarriedOver
@@ -58,20 +58,29 @@ const DraggableTopicRow: React.FC<DraggableTopicRowProps> = ({
           : 'bg-[#f8fafc] border-[#e2e8f0] text-[#0b1c30]'
       }`}
     >
-      <div className="flex flex-col min-w-0 pointer-events-none">
-        <span className="font-semibold truncate">{topic.title}</span>
+      <div className="flex flex-col min-w-0 pointer-events-none flex-1">
+        <span className="font-semibold text-xs leading-snug whitespace-normal line-clamp-2">
+          {topic.title}
+        </span>
         {topic.subconcept && (
-          <span className="text-[10px] text-[#707971] truncate">{topic.subconcept}</span>
+          <span className="text-[11px] text-[#707971] leading-tight line-clamp-1 mt-0.5">
+            {topic.subconcept}
+          </span>
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0 ml-1">
+        {topic.isMultiDayPart && topic.partInfo && (
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+            {topic.partInfo}
+          </span>
+        )}
         {topic.isCarriedOver && (
           <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-red-100 text-red-700 border border-red-300">
             Spilled
           </span>
         )}
-        <span className="font-mono text-[10px] text-[#707971]">
+        <span className="font-mono text-xs text-[#707971] font-medium">
           {topic.durationMinutes}m
         </span>
         {onRemoveTopic && (
@@ -206,6 +215,12 @@ export const DraggableTopicCard: React.FC<DraggableTopicCardProps> = ({
           >
             {card.subject}
           </span>
+
+          {card.isMultiDayPart && card.partInfo && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold font-mono bg-emerald-50 text-emerald-800 border border-emerald-200">
+              {card.partInfo}
+            </span>
+          )}
 
           {isCardCarriedOver && (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-300 flex items-center gap-1">

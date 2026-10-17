@@ -1393,6 +1393,27 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       c.topics.every((t) => t.is_theory_done && t.is_practice_done)
     ).length;
 
+    const perSubject = hscMasterSyllabus.map((sub) => {
+      const allSubTopics = sub.chapters.flatMap((c) => c.topics);
+      const total = allSubTopics.length;
+      const completedTheory = allSubTopics.filter((t) => t.is_theory_done).length;
+      const completedPractice = allSubTopics.filter((t) => t.is_practice_done).length;
+      const completedBoth = allSubTopics.filter((t) => t.is_theory_done && t.is_practice_done).length;
+      const progressPercent =
+        total > 0 ? ((completedTheory + completedPractice) / (total * 2)) * 100 : 0;
+      return {
+        id: sub.id,
+        name: sub.name,
+        totalTopics: total,
+        completedTopicsCount: completedBoth,
+        completedTheoryCount: completedTheory,
+        completedPracticeCount: completedPractice,
+        progressPercent,
+        paperType: sub.paperType,
+        icon: sub.icon,
+      };
+    });
+
     return {
       grandProgressPercent,
       overallTheoryPercent,
@@ -1407,6 +1428,7 @@ export const StudyTrackProvider: React.FC<{ children: ReactNode }> = ({ children
       completedMCQs: allTopics.reduce((sum, t) => sum + t.mcqDone, 0),
       totalCQs: allTopics.reduce((sum, t) => sum + t.cqTarget, 0),
       completedCQs: allTopics.reduce((sum, t) => sum + t.cqDone, 0),
+      perSubject,
     };
   }, [hscMasterSyllabus]);
 
